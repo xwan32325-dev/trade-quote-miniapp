@@ -4,7 +4,7 @@
     <view class="card">
       <view class="card-title">拍照填单</view>
       <view class="ocr-btn" :class="{ 'ocr-btn-disabled': ocr.loading }" @click="onOcr">
-        {{ ocr.loading ? '识别中…' : '📷 拍照填单' }}
+        {{ ocr.loading ? '识别中…' : '拍照填单' }}
       </view>
       <view class="ocr-hint">拍采购单 / 发票 / 装箱单，自动识别产品、数量、单价、箱规（支持多产品）</view>
       <view class="ocr-thumb-wrap" v-if="ocr.thumb">
@@ -344,7 +344,7 @@
         <view class="btn" @click="onSave">保存到记录</view>
         <view class="btn btn-ghost" @click="onCopyQuote">复制报价文本</view>
       </view>
-      <view class="btn btn-export" @click="openExport">📄 导出报价单</view>
+      <view class="btn btn-export" @click="openExport">导出报价单</view>
     </view>
 
     <!-- 导出面板：填写公司信息与备注，生成可直接发客户的图片 / PDF 报价单 -->
@@ -386,13 +386,13 @@
             class="export-btn"
             :class="{ 'export-btn-disabled': exportState.loading }"
             @click="onExport('png')"
-          >{{ exportState.loading && exportState.format === 'png' ? '生成中…' : '📷 生成图片报价单' }}</view>
+          >{{ exportState.loading && exportState.format === 'png' ? '生成中…' : '生成图片报价单' }}</view>
           <view class="export-btn-note">可直接在微信里发给客户</view>
           <view
             class="export-btn export-btn-ghost"
             :class="{ 'export-btn-disabled': exportState.loading }"
             @click="onExport('pdf')"
-          >{{ exportState.loading && exportState.format === 'pdf' ? '生成中…' : '📄 导出 PDF 报价单' }}</view>
+          >{{ exportState.loading && exportState.format === 'pdf' ? '生成中…' : '导出 PDF 报价单' }}</view>
           <view class="export-btn-note">适合正式邮件 / 打印</view>
         </scroll-view>
       </view>
