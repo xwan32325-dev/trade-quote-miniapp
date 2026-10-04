@@ -107,6 +107,22 @@ export function runOnce(payload) {
 }
 
 /**
+ * 组装报价单导出 GET URL（H5 window.open 与小程序 uni.downloadFile 共用）
+ * @param {{quote:object, company:object, format:'png'|'pdf'}} payload
+ * @returns {string}
+ */
+export function buildQuoteDocUrl(payload) {
+  const format = payload && payload.format === 'pdf' ? 'pdf' : 'png';
+  return (
+    getApiBase() +
+    '/api/quote-doc?data=' +
+    encodeURIComponent(JSON.stringify(payload)) +
+    '&format=' +
+    format
+  );
+}
+
+/**
  * 识别单据图片（采购单/发票/装箱单）→ 结构化字段
  * @param {string} imageDataUrl data:image/jpeg;base64,...
  * @returns {Promise<{ok?:boolean, fields:object, raw?:string, elapsedMs?:number, tokens?:number, model?:string}>}

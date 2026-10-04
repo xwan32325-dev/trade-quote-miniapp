@@ -308,6 +308,58 @@
         <view class="btn" @click="onSave">保存到记录</view>
         <view class="btn btn-ghost" @click="onCopyQuote">复制报价文本</view>
       </view>
+      <view class="btn btn-export" @click="openExport">📄 导出报价单</view>
+    </view>
+
+    <!-- 导出面板：填写公司信息与备注，生成可直接发客户的图片 / PDF 报价单 -->
+    <view class="export-mask" v-if="exportState.show" @click="closeExport">
+      <view class="export-panel" @click.stop>
+        <view class="export-head">
+          <text class="export-title">导出报价单</text>
+          <text class="export-close" @click="closeExport">✕</text>
+        </view>
+        <scroll-view class="export-body" scroll-y>
+          <view class="export-section">公司信息</view>
+          <view class="export-hint-line">填写一次后自动记住，下次导出无需再填</view>
+          <view class="field">
+            <text class="field-label">公司名称</text>
+            <input class="field-input" v-model="exportState.company.name" placeholder="如：上海某某进出口有限公司" />
+          </view>
+          <view class="field">
+            <text class="field-label">地址</text>
+            <input class="field-input" v-model="exportState.company.address" placeholder="如：上海市浦东新区某某路 100 号" />
+          </view>
+          <view class="field">
+            <text class="field-label">联系人</text>
+            <input class="field-input" v-model="exportState.company.contact" placeholder="如：张经理" />
+          </view>
+          <view class="field">
+            <text class="field-label">电话</text>
+            <input class="field-input" type="text" v-model="exportState.company.phone" placeholder="如：13800000000" />
+          </view>
+          <view class="field">
+            <text class="field-label">邮箱</text>
+            <input class="field-input" type="text" v-model="exportState.company.email" placeholder="如：sales@example.com" />
+          </view>
+          <view class="export-section">备注</view>
+          <view class="field">
+            <text class="field-label">备注</text>
+            <input class="field-input" v-model="exportState.remark" placeholder="选填，如：报价有效期 30 天" />
+          </view>
+          <view
+            class="export-btn"
+            :class="{ 'export-btn-disabled': exportState.loading }"
+            @click="onExport('png')"
+          >{{ exportState.loading && exportState.format === 'png' ? '生成中…' : '📷 生成图片报价单' }}</view>
+          <view class="export-btn-note">可直接在微信里发给客户</view>
+          <view
+            class="export-btn export-btn-ghost"
+            :class="{ 'export-btn-disabled': exportState.loading }"
+            @click="onExport('pdf')"
+          >{{ exportState.loading && exportState.format === 'pdf' ? '生成中…' : '📄 导出 PDF 报价单' }}</view>
+          <view class="export-btn-note">适合正式邮件 / 打印</view>
+        </scroll-view>
+      </view>
     </view>
   </view>
 </template>
@@ -316,7 +368,7 @@
 import { reactive, computed, onMounted, watch } from 'vue'
 import { formatNumber, safeNumber } from '../../utils/calc.js'
 import { saveRecord, makeId, saveForm, loadForm } from '../../utils/storage.js'
-import { getFxRate, parseImage } from '../../utils/request.js'
+import { getFxRate, parseImage, buildQuoteDocUrl } from '../../utils/request.js'
 import { pickImageAsDataUrl } from '../../utils/image.js'
 import { CURRENCIES, getCurrency, rateDecimals } from '../../utils/currency.js'
 import {
@@ -911,6 +963,206 @@ function onCopyQuote() {
     success: () => uni.showToast({ title: '已复制', icon: 'success' }),
   })
 }
+
+// ---- 导出报价单：公司信息 + 备注本地记忆（key = form:company），生成图片 / PDF ----
+const COMPANY_KEYS = ['name', 'address', 'contact', 'phone', 'email']
+const exportState = reactive({
+  show: false,
+  loading: false, // 正在生成，防重复点击
+  format: '', // 正在生成的格式 'png' | 'pdf'
+  company: { name: '', address: '', contact: '', phone: '', email: '' },
+  remark: '',
+})
+
+// 公司信息与备注一起记忆，避免多次打开重填
+function saveCompanyMemo() {
+  saveForm('company', { ...exportState.company, remark: exportState.remark })
+}
+watch(() => exportState.company, saveCompanyMemo, { deep: true })
+watch(() => exportState.remark, saveCompanyMemo)
+
+function openExport() {
+  const saved = loadForm('company')
+  if (saved) {
+    COMPANY_KEYS.forEach((k) => {
+      if (saved[k] !== undefined && saved[k] !== null) exportState.company[k] = saved[k]
+    })
+    if (saved.remark !== undefined && saved.remark !== null) exportState.remark = saved.remark
+  }
+  exportState.show = true
+}
+
+function closeExport() {
+  if (exportState.loading) return // 生成中不允许关闭，避免状态错乱
+  exportState.show = false
+}
+
+// 组装后端 payload：金额取当前所选贸易方式的计算结果（与结果区一致）
+function buildExportPayload(format) {
+  const r = result.value
+  const v = view.value
+  return {
+    quote: {
+      productName: form.productName || '未命名产品',
+      customerName: form.customerName || '',
+      qty: safeNumber(form.qty),
+      unitPrice: v.unitPrice,
+      totalPrice: v.totalPrice,
+      currency: form.currency,
+      tradeTerm: r.tradeTerm,
+      transportMode: isMultimodal.value ? MULTIMODAL.name : transportLabel.value,
+      multimodalText: isMultimodal.value ? multiText.value : '',
+      exchangeRate: safeNumber(form.exchangeRate),
+      remark: exportState.remark,
+    },
+    company: { ...exportState.company },
+    format,
+  }
+}
+
+// 低于成本时二次确认（手动定价场景），返回是否继续
+function confirmBelowCost() {
+  if (!view.value.belowCost) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    uni.showModal({
+      title: '提示',
+      content: '当前报价低于成本，仍要导出吗？',
+      success: (res) => resolve(!!res.confirm),
+      fail: () => resolve(false),
+    })
+  })
+}
+
+async function onExport(format) {
+  if (exportState.loading) return
+  // 复用现有规则：多式联运至少 2 种，否则报价本身无效
+  if (isMultimodal.value && form.multimodal.length < 2) {
+    uni.showToast({ title: '多式联运至少选 2 种', icon: 'none' })
+    return
+  }
+  const go = await confirmBelowCost()
+  if (!go) return
+
+  exportState.loading = true
+  exportState.format = format
+  try {
+    const url = buildQuoteDocUrl(buildExportPayload(format))
+
+    // #ifdef H5
+    // 浏览器直接打开：可预览 / 下载 / 打印
+    window.open(url, '_blank')
+    // #endif
+
+    // #ifdef MP-WEIXIN
+    const filePath = await downloadQuoteDoc(url)
+    if (format === 'png') {
+      await saveImageToAlbum(filePath)
+      uni.showToast({ title: '已保存到相册，可直接发给客户', icon: 'none' })
+    } else {
+      await openPdfDoc(filePath)
+    }
+    // #endif
+  } catch (e) {
+    // 已自行给出引导（如相册授权）的错误不再重复弹窗
+    if (!(e && e.handled)) {
+      uni.showModal({
+        title: '导出失败',
+        content: (e && e.message) || '导出失败，请稍后重试',
+        showCancel: false,
+      })
+    }
+  } finally {
+    exportState.loading = false
+    exportState.format = ''
+  }
+}
+
+// #ifdef MP-WEIXIN
+// 下载生成的图片 / PDF 到临时文件；失败时读出后端返回的 message，不吞错误
+function downloadQuoteDoc(url) {
+  return new Promise((resolve, reject) => {
+    uni.downloadFile({
+      url,
+      success: (res) => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(res.tempFilePath)
+        } else {
+          readDownloadError(res.tempFilePath, res.statusCode).then((msg) => reject(new Error(msg)))
+        }
+      },
+      fail: (err) => reject(new Error((err && err.errMsg) || '下载失败')),
+    })
+  })
+}
+
+// downloadFile 非 2xx 时仍会落盘，错误正文需从文件里读出来
+function readDownloadError(filePath, statusCode) {
+  const fallback = '导出失败（HTTP ' + statusCode + '）'
+  return new Promise((resolve) => {
+    if (!filePath) return resolve(fallback)
+    uni.getFileSystemManager().readFile({
+      filePath,
+      encoding: 'utf8',
+      success: (r) => {
+        let msg = ''
+        try {
+          const j = JSON.parse(r.data)
+          msg = j.message || j.error || ''
+        } catch (e) {
+          msg = (r.data || '').slice(0, 200)
+        }
+        resolve(msg || fallback)
+      },
+      fail: () => resolve(fallback),
+    })
+  })
+}
+
+// 保存到相册；用户拒绝授权时给出明确提示并引导去设置页开启
+function saveImageToAlbum(filePath) {
+  return new Promise((resolve, reject) => {
+    uni.saveImageToPhotosAlbum({
+      filePath,
+      success: () => resolve(),
+      fail: (err) => {
+        const msg = (err && err.errMsg) || ''
+        if (/auth|authorize|permission|deny/i.test(msg)) {
+          const e = new Error('')
+          e.handled = true
+          uni.showModal({
+            title: '需要相册权限',
+            content: '保存图片需要「保存到相册」权限，是否前往设置开启？',
+            confirmText: '去设置',
+            success: (r) => {
+              if (r.confirm) uni.openSetting({})
+            },
+          })
+          reject(e)
+        } else if (/cancel/i.test(msg)) {
+          const e = new Error('')
+          e.handled = true
+          reject(e)
+        } else {
+          reject(new Error(msg || '保存到相册失败'))
+        }
+      },
+    })
+  })
+}
+
+// 打开 PDF：右上角菜单可转发给客户
+function openPdfDoc(filePath) {
+  return new Promise((resolve, reject) => {
+    uni.openDocument({
+      filePath,
+      fileType: 'pdf',
+      showMenu: true,
+      success: () => resolve(),
+      fail: (err) => reject(new Error((err && err.errMsg) || '打开 PDF 失败')),
+    })
+  })
+}
+// #endif
 </script>
 
 <style scoped>
@@ -1176,5 +1428,93 @@ picker .field {
 .fx-down {
   color: #16a34a;
   margin-left: 6rpx;
+}
+
+/* ---- 导出报价单入口按钮 ---- */
+.btn-export {
+  margin-top: 20rpx;
+  background: #0f766e;
+}
+
+/* ---- 导出面板（页面内弹层，不引 UI 库） ---- */
+.export-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(17, 24, 39, 0.45);
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+}
+.export-panel {
+  width: 100%;
+  max-height: 86vh;
+  background: #ffffff;
+  border-top-left-radius: 24rpx;
+  border-top-right-radius: 24rpx;
+  display: flex;
+  flex-direction: column;
+}
+.export-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28rpx 24rpx 16rpx;
+  border-bottom: 1rpx solid #f0f1f3;
+}
+.export-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #111827;
+}
+.export-close {
+  font-size: 32rpx;
+  line-height: 1;
+  color: #9ca3af;
+  padding: 4rpx 12rpx;
+}
+.export-body {
+  /* 小程序 scroll-view 需显式高度才能滚动 */
+  height: 68vh;
+  padding: 8rpx 24rpx 32rpx;
+  box-sizing: border-box;
+}
+.export-section {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #111827;
+  padding: 24rpx 0 8rpx;
+}
+.export-hint-line {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #9ca3af;
+  padding-bottom: 8rpx;
+}
+.export-btn {
+  margin-top: 24rpx;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #ffffff;
+  background: #2563eb;
+  border-radius: 12rpx;
+  padding: 24rpx 0;
+}
+.export-btn-ghost {
+  background: #eef2ff;
+  color: #2563eb;
+}
+.export-btn-disabled {
+  opacity: 0.55;
+}
+.export-btn-note {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #9ca3af;
+  text-align: center;
+  padding-top: 8rpx;
 }
 </style>

@@ -101,6 +101,8 @@ const ALLOWED_APIS = [
   { method: 'GET', path: '/api/fx' },
   { method: 'POST', path: '/api/run-once' },
   { method: 'POST', path: '/api/parse-image' },
+  { method: 'GET', path: '/api/quote-doc' },
+  { method: 'POST', path: '/api/quote-doc' },
 ];
 
 function isAllowedApi(method, url) {
