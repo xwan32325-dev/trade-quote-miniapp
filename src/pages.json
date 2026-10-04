@@ -1,0 +1,58 @@
+{
+	"pages": [
+		{
+			"path": "pages/quote/index",
+			"style": {
+				"navigationBarTitleText": "报价计算"
+			}
+		},
+		{
+			"path": "pages/loading/index",
+			"style": {
+				"navigationBarTitleText": "装柜计算"
+			}
+		},
+		{
+			"path": "pages/ai/index",
+			"style": {
+				"navigationBarTitleText": "AI 邮件"
+			}
+		},
+		{
+			"path": "pages/history/index",
+			"style": {
+				"navigationBarTitleText": "我的记录"
+			}
+		}
+	],
+	"tabBar": {
+		"color": "#6b7280",
+		"selectedColor": "#2563eb",
+		"backgroundColor": "#ffffff",
+		"borderStyle": "black",
+		"list": [
+			{
+				"pagePath": "pages/quote/index",
+				"text": "报价"
+			},
+			{
+				"pagePath": "pages/loading/index",
+				"text": "装柜"
+			},
+			{
+				"pagePath": "pages/ai/index",
+				"text": "AI邮件"
+			},
+			{
+				"pagePath": "pages/history/index",
+				"text": "记录"
+			}
+		]
+	},
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "外贸算价助手",
+		"navigationBarBackgroundColor": "#ffffff",
+		"backgroundColor": "#f5f6f8"
+	}
+}
