@@ -20,8 +20,8 @@
         </view>
         <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
         <view class="record-summary">
-          <text>{{ item.term }} 单价 ${{ fmt(item.unitPrice) }}</text>
-          <text>总价 ${{ fmt(item.totalPrice) }}</text>
+          <text>{{ codeOf(item) }} 单价 {{ fmt(item.unitPrice) }}</text>
+          <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
         </view>
       </view>
 
@@ -36,19 +36,19 @@
         </view>
         <view class="result-line">
           <text class="field-label">FOB 总价</text>
-          <text class="result-value">$ {{ fmt(item.result.fobTotal) }}</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.fobTotal) }}</text>
         </view>
         <view class="result-line">
           <text class="field-label">CFR 总价</text>
-          <text class="result-value">$ {{ fmt(item.result.cfrTotal) }}</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cfrTotal) }}</text>
         </view>
         <view class="result-line">
           <text class="field-label">CIF 总价</text>
-          <text class="result-value">$ {{ fmt(item.result.cifTotal) }}</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cifTotal) }}</text>
         </view>
         <view class="result-line">
           <text class="field-label">保险费</text>
-          <text class="result-value">$ {{ fmt(item.result.insurance) }}</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.insurance) }}</text>
         </view>
         <view class="result-line">
           <text class="field-label">换汇成本</text>
@@ -74,6 +74,7 @@ import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { getHistory, removeRecord, clearHistory } from '../../utils/storage.js'
 import { formatNumber } from '../../utils/calc.js'
+import { getCurrency } from '../../utils/currency.js'
 
 const list = ref([])
 const expandedId = ref('')
@@ -87,6 +88,11 @@ onShow(load)
 
 function fmt(v, decimals = 2) {
   return formatNumber(v, decimals)
+}
+
+// 旧记录没有 currency 字段，按 USD 兜底
+function codeOf(item) {
+  return getCurrency(item && item.currency).code
 }
 
 function formatTime(ts) {

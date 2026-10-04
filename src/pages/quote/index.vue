@@ -62,8 +62,14 @@
 
     <view class="card">
       <view class="card-title">汇率与利润</view>
+      <picker mode="selector" :range="currencyRange" :value="currencyIndex" @change="onCurrencyChange">
+        <view class="field">
+          <text class="field-label">结算币种</text>
+          <text class="field-picker">{{ currencyLabel }} ›</text>
+        </view>
+      </picker>
       <view class="field">
-        <text class="field-label">汇率（1 USD = ? ¥）</text>
+        <text class="field-label">汇率（1 {{ form.currency }} = ? ¥）</text>
         <input class="field-input" type="digit" v-model="form.exchangeRate" @input="onRateInput" />
       </view>
       <view class="fx-bar">
@@ -75,14 +81,14 @@
         </template>
 
         <template v-else-if="fxStatus === 'error'">
-          <text class="fx-text fx-error">🔴 获取失败：{{ fx.error }}（沿用 {{ rateText }}，请手动确认）</text>
+          <text class="fx-text fx-error">🔴 获取失败：{{ fx.error }}（沿用 1 {{ form.currency }} = {{ rateText }} ¥，请手动确认）</text>
           <text class="fx-action" @click="fetchFx()">重试</text>
         </template>
 
-        <text v-else-if="fxStatus === 'stale'" class="fx-text fx-warn">🟠 实时源不可用，沿用 {{ rateText }}（请自行确认）</text>
+        <text v-else-if="fxStatus === 'stale'" class="fx-text fx-warn">🟠 实时源不可用，沿用 1 {{ form.currency }} = {{ rateText }} ¥（请自行确认）</text>
 
         <template v-else-if="fxStatus === 'success'">
-          <text class="fx-text fx-ok">🟢 实时 {{ rateText }}<text :class="fxChangeClass">{{ fxChangeText }}</text> · 数据日 {{ fxSourceDateShort }} · {{ fx.data.source }}</text>
+          <text class="fx-text fx-ok">🟢 实时 1 {{ form.currency }} = {{ rateText }} ¥<text :class="fxChangeClass">{{ fxChangeText }}</text> · 数据日 {{ fxSourceDateShort }} · {{ fx.data.source }}</text>
           <text class="fx-action" @click="fetchFx({ force: true })">刷新</text>
         </template>
       </view>
@@ -98,7 +104,7 @@
       <view class="field">
         <text class="field-label">海运费（整票）</text>
         <input class="field-input" type="digit" v-model="form.freight" />
-        <text class="field-unit">$</text>
+        <text class="field-unit">{{ symbol }}</text>
       </view>
       <view class="field">
         <text class="field-label">保险费率</text>
@@ -116,31 +122,31 @@
       <view class="card-title">报价结果</view>
       <view class="result-line">
         <text class="field-label">FOB 单价</text>
-        <text class="result-value">$ {{ fmt(result.fobUnit) }} / 件</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.fobUnit) }} / 件</text>
       </view>
       <view class="result-line">
         <text class="field-label">FOB 总价</text>
-        <text class="result-value">$ {{ fmt(result.fobTotal) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.fobTotal) }}</text>
       </view>
       <view class="result-line">
         <text class="field-label">CFR 单价</text>
-        <text class="result-value">$ {{ fmt(div(result.cfrTotal, result.qty)) }} / 件</text>
+        <text class="result-value">{{ symbol }} {{ fmt(div(result.cfrTotal, result.qty)) }} / 件</text>
       </view>
       <view class="result-line">
         <text class="field-label">CFR 总价</text>
-        <text class="result-value">$ {{ fmt(result.cfrTotal) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.cfrTotal) }}</text>
       </view>
       <view class="result-line">
         <text class="field-label">CIF 单价</text>
-        <text class="result-value">$ {{ fmt(div(result.cifTotal, result.qty)) }} / 件</text>
+        <text class="result-value">{{ symbol }} {{ fmt(div(result.cifTotal, result.qty)) }} / 件</text>
       </view>
       <view class="result-line">
         <text class="field-label">CIF 总价</text>
-        <text class="result-value">$ {{ fmt(result.cifTotal) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.cifTotal) }}</text>
       </view>
       <view class="result-line">
         <text class="field-label">保险费</text>
-        <text class="result-value">$ {{ fmt(result.insurance) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.insurance) }}</text>
       </view>
       <view class="result-line">
         <text class="field-label">退税额合计</text>
@@ -151,9 +157,9 @@
         <text class="result-value">¥ {{ fmt(result.totalCost) }}</text>
       </view>
       <view class="result-line">
-        <text class="field-label">换汇成本（汇率 {{ fmt(form.exchangeRate, 4) }}）</text>
+        <text class="field-label">换汇成本（汇率 {{ rateText }}）</text>
         <text class="result-value" :class="result.isProfit ? 'profit' : result.isLoss ? 'loss' : ''">
-          {{ fmt(result.exchangeCost, 4) }}
+          {{ fmt(result.exchangeCost, rateDecimals(result.exchangeCost)) }}
           <text v-if="result.isProfit"> 盈利</text>
           <text v-else-if="result.isLoss"> 亏损</text>
         </text>
@@ -180,6 +186,7 @@ import { reactive, computed, onMounted, watch } from 'vue'
 import { calcQuote, formatNumber, safeNumber } from '../../utils/calc.js'
 import { saveRecord, makeId, saveForm, loadForm } from '../../utils/storage.js'
 import { getFxRate } from '../../utils/request.js'
+import { CURRENCIES, getCurrency, rateDecimals } from '../../utils/currency.js'
 
 // 表单默认值（与 SPEC 一致）
 const form = reactive({
@@ -190,6 +197,7 @@ const form = reactive({
   vatRate: 13,
   rebateRate: 13,
   domesticFee: 2000,
+  currency: 'USD',
   exchangeRate: 7.1,
   profitRate: 10,
   freight: 500,
@@ -199,6 +207,19 @@ const form = reactive({
 
 const result = computed(() => calcQuote(form))
 
+// ---- 结算币种：picker 选项与当前项 ----
+const currencyRange = CURRENCIES.map((c) => `${c.name}（${c.code}）`)
+const currencyIndex = computed(() => {
+  const i = CURRENCIES.findIndex((c) => c.code === form.currency)
+  return i === -1 ? 0 : i
+})
+const currencyLabel = computed(() => {
+  const c = getCurrency(form.currency)
+  return `${c.name}（${c.code}）`
+})
+// 报价金额使用的币种符号（$ / € / ¥ / A$ / ₫ …）
+const symbol = computed(() => getCurrency(form.currency).symbol)
+
 // ---- 表单记忆：只记稳定字段，产品名/客户名/汇率不记 ----
 const MEMO_KEYS = [
   'price',
@@ -206,6 +227,7 @@ const MEMO_KEYS = [
   'vatRate',
   'rebateRate',
   'domesticFee',
+  'currency',
   'profitRate',
   'freight',
   'insuranceRate',
@@ -255,7 +277,8 @@ const fxStatus = computed(() => {
 })
 
 // 状态栏展示的汇率取当前输入框的值（成功/stale 已同步写入，失败时即用户现有值）
-const rateText = computed(() => fmt(form.exchangeRate, 4))
+// 位数按量级自适应：小面值币种（VND/IDR 等）多给几位，避免显示成 0.0000
+const rateText = computed(() => fmt(form.exchangeRate, rateDecimals(form.exchangeRate)))
 
 const fxChangePct = computed(() => {
   const v = fx.data && fx.data.changePct
@@ -291,15 +314,31 @@ async function fetchFx({ force = false } = {}) {
   if (fx.manual) return
   fx.loading = true
   fx.error = ''
+  const from = form.currency
   try {
-    const data = await getFxRate({ force })
+    const data = await getFxRate({ from, to: 'CNY', force })
+    // 币种可能在请求期间又被切走，过期结果直接丢弃
+    if (from !== form.currency) return
     fx.data = data
-    if (!fx.manual) form.exchangeRate = Number(Number(data.rate).toFixed(4))
+    // 存全精度原始值：小面值币种（VND 0.000258 等）截断会带来巨大误差
+    if (!fx.manual) form.exchangeRate = Number(data.rate)
   } catch (e) {
+    if (from !== form.currency) return
     fx.error = (e && e.message) || '网络请求失败'
   } finally {
-    fx.loading = false
+    if (from === form.currency) fx.loading = false
   }
+}
+
+// 切换结算币种：立即按新币种强制重拉，并退出手动模式回到自动
+function onCurrencyChange(e) {
+  const idx = Number(e.detail.value)
+  const picked = CURRENCIES[idx]
+  if (!picked || picked.code === form.currency) return
+  form.currency = picked.code
+  fx.manual = false
+  fx.data = null
+  fetchFx({ force: true })
 }
 
 // 用户开始手动输入 → 切到手动模式
@@ -330,6 +369,8 @@ onMounted(() => {
     MEMO_KEYS.forEach((k) => {
       if (saved[k] !== undefined && saved[k] !== null) form[k] = saved[k]
     })
+    // 记忆里的币种可能已失效，回退 USD
+    form.currency = getCurrency(form.currency).code
   }
   fetchFx()
 })
@@ -340,6 +381,7 @@ function onSave() {
     id: makeId(),
     productName: form.productName || '未命名产品',
     customerName: form.customerName || '',
+    currency: form.currency,
     term: 'FOB',
     unitPrice: r.fobUnit,
     totalPrice: r.fobTotal,
@@ -353,18 +395,17 @@ function onSave() {
 
 function onCopyQuote() {
   const r = result.value
+  const code = form.currency
   const productName = form.productName || '未命名产品'
   const customerName = form.customerName || '未填写客户'
-  const rateLabel =
-    fx.manual || !fx.data
-      ? '手动'
-      : '实时' + (fx.data.sourceDate ? ' ' + shortDate(fx.data.sourceDate) : '')
+  // 外贸单据统一用币种代码，避免 ¥ / $ 符号歧义
   const text = [
     `【报价单】${productName} - ${customerName}`,
-    `FOB 上海：USD ${fmt(r.fobUnit)}/件（总价 USD ${fmt(r.fobTotal)}）`,
-    `CFR：USD ${fmt(div(r.cfrTotal, r.qty))}/件（总价 USD ${fmt(r.cfrTotal)}）`,
-    `CIF：USD ${fmt(div(r.cifTotal, r.qty))}/件（总价 USD ${fmt(r.cifTotal)}）`,
-    `数量：${fmt(r.qty, 0)} 件 | 汇率：${fmt(form.exchangeRate, 4)}（${rateLabel}） | 盈亏率：${fmt(r.profitPct, 2)}%`,
+    `币种：${code}`,
+    `FOB 上海：${code} ${fmt(r.fobUnit)}/件（总价 ${code} ${fmt(r.fobTotal)}）`,
+    `CFR：${code} ${fmt(div(r.cfrTotal, r.qty))}/件（总价 ${code} ${fmt(r.cfrTotal)}）`,
+    `CIF：${code} ${fmt(div(r.cifTotal, r.qty))}/件（总价 ${code} ${fmt(r.cifTotal)}）`,
+    `数量：${fmt(r.qty, 0)} 件 | 汇率：1 ${code} = ${rateText.value} ¥ | 盈亏率：${fmt(r.profitPct, 2)}%`,
     '有效期：30 天',
   ].join('\n')
   uni.setClipboardData({
@@ -375,6 +416,15 @@ function onCopyQuote() {
 </script>
 
 <style scoped>
+/* 币种选择：picker 包裹的 field 需要补回底部分隔线 */
+picker .field {
+  border-bottom: 1rpx solid #f0f1f3;
+}
+.field-picker {
+  color: #111827;
+  font-size: 28rpx;
+}
+
 /* 常用税率 chips */
 .chips {
   display: flex;
