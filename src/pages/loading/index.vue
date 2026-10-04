@@ -78,8 +78,9 @@
 </template>
 
 <script setup>
-import { reactive, computed } from 'vue'
+import { reactive, computed, watch, onMounted } from 'vue'
 import { calcLoading, formatNumber, CONTAINERS } from '../../utils/calc.js'
+import { saveForm, loadForm } from '../../utils/storage.js'
 
 const containerKeys = Object.keys(CONTAINERS)
 
@@ -90,6 +91,30 @@ const form = reactive({
   grossWeight: 12,
   containerType: '20GP',
   loadRate: 85,
+})
+
+// ---- 表单记忆：箱规 / 柜型 / 装载率 ----
+const MEMO_KEYS = ['length', 'width', 'height', 'grossWeight', 'containerType', 'loadRate']
+
+watch(
+  form,
+  () => {
+    const payload = {}
+    MEMO_KEYS.forEach((k) => {
+      payload[k] = form[k]
+    })
+    saveForm('loading', payload)
+  },
+  { deep: true },
+)
+
+onMounted(() => {
+  const saved = loadForm('loading')
+  if (saved) {
+    MEMO_KEYS.forEach((k) => {
+      if (saved[k] !== undefined && saved[k] !== null) form[k] = saved[k]
+    })
+  }
 })
 
 const containerLabels = containerKeys.map((k) => CONTAINERS[k].label)

@@ -5,6 +5,7 @@
 
 const HISTORY_KEY = 'quoteHistory';
 const MAX_HISTORY = 50;
+const FORM_PREFIX = 'form:';
 
 /** 生成一条记录的唯一 id */
 export function makeId() {
@@ -41,6 +42,25 @@ export function removeRecord(id) {
     uni.setStorageSync(HISTORY_KEY, list);
   } catch (e) {}
   return list;
+}
+
+/** 保存表单记忆，key 区分页面（如 'quote' / 'loading' / 'ai'） */
+export function saveForm(key, obj) {
+  try {
+    uni.setStorageSync(FORM_PREFIX + key, obj);
+  } catch (e) {
+    // 存储失败不阻断页面流程
+  }
+}
+
+/** 读取表单记忆，读不到或非对象时返回 null */
+export function loadForm(key) {
+  try {
+    const v = uni.getStorageSync(FORM_PREFIX + key);
+    return v && typeof v === 'object' ? v : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /** 清空全部记录 */

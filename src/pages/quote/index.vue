@@ -30,10 +30,28 @@
         <input class="field-input" type="digit" v-model="form.vatRate" />
         <text class="field-unit">%</text>
       </view>
+      <view class="chips">
+        <text
+          v-for="v in VAT_RATES"
+          :key="v"
+          class="chip"
+          :class="{ 'chip-active': isRateActive('vatRate', v) }"
+          @click="pickRate('vatRate', v)"
+        >{{ v }}%</text>
+      </view>
       <view class="field">
         <text class="field-label">出口退税率</text>
         <input class="field-input" type="digit" v-model="form.rebateRate" />
         <text class="field-unit">%</text>
+      </view>
+      <view class="chips">
+        <text
+          v-for="v in REBATE_RATES"
+          :key="v"
+          class="chip"
+          :class="{ 'chip-active': isRateActive('rebateRate', v) }"
+          @click="pickRate('rebateRate', v)"
+        >{{ v }}%</text>
       </view>
       <view class="field">
         <text class="field-label">国内费用合计</text>
@@ -158,9 +176,9 @@
 </template>
 
 <script setup>
-import { reactive, computed, onMounted } from 'vue'
+import { reactive, computed, onMounted, watch } from 'vue'
 import { calcQuote, formatNumber, safeNumber } from '../../utils/calc.js'
-import { saveRecord, makeId } from '../../utils/storage.js'
+import { saveRecord, makeId, saveForm, loadForm } from '../../utils/storage.js'
 import { getFxRate } from '../../utils/request.js'
 
 // 表单默认值（与 SPEC 一致）
@@ -180,6 +198,31 @@ const form = reactive({
 })
 
 const result = computed(() => calcQuote(form))
+
+// ---- 表单记忆：只记稳定字段，产品名/客户名/汇率不记 ----
+const MEMO_KEYS = [
+  'price',
+  'qty',
+  'vatRate',
+  'rebateRate',
+  'domesticFee',
+  'profitRate',
+  'freight',
+  'insuranceRate',
+  'markupRate',
+]
+
+watch(
+  form,
+  () => {
+    const payload = {}
+    MEMO_KEYS.forEach((k) => {
+      payload[k] = form[k]
+    })
+    saveForm('quote', payload)
+  },
+  { deep: true },
+)
 
 // 展示用格式化：金额 2 位、汇率/换汇成本 4 位，均带千分位
 function fmt(v, decimals = 2) {
@@ -270,7 +313,24 @@ function useLiveRate() {
   fetchFx()
 }
 
+// 常用税率一键选（点击直接填入，当前值高亮）
+const VAT_RATES = [13, 9, 6]
+const REBATE_RATES = [13, 10, 9, 6, 0]
+
+function pickRate(field, v) {
+  form[field] = v
+}
+function isRateActive(field, v) {
+  return Number(form[field]) === v
+}
+
 onMounted(() => {
+  const saved = loadForm('quote')
+  if (saved) {
+    MEMO_KEYS.forEach((k) => {
+      if (saved[k] !== undefined && saved[k] !== null) form[k] = saved[k]
+    })
+  }
   fetchFx()
 })
 
@@ -315,6 +375,28 @@ function onCopyQuote() {
 </script>
 
 <style scoped>
+/* 常用税率 chips */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  padding: 12rpx 0 8rpx;
+}
+.chip {
+  font-size: 24rpx;
+  line-height: 1;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1rpx solid #bfdbfe;
+  border-radius: 999rpx;
+  padding: 12rpx 24rpx;
+}
+.chip-active {
+  color: #ffffff;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
 /* 汇率状态栏：紧贴汇率输入框的小字提示 */
 .fx-bar {
   display: flex;

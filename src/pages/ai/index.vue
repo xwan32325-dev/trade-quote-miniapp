@@ -58,8 +58,9 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed } from 'vue'
+import { reactive, ref, computed, watch, onMounted } from 'vue'
 import { runOnce, getApiBase, setApiBase } from '../../utils/request.js'
+import { saveForm, loadForm } from '../../utils/storage.js'
 
 // 每个模板对应一段 system 提示词
 const TEMPLATES = [
@@ -94,6 +95,21 @@ const templateIndex = ref(0)
 const currentTemplate = computed(() => TEMPLATES[templateIndex.value])
 
 const form = reactive({ customer: '', product: '', keyInfo: '' })
+
+// ---- 表单记忆：只记客户名与产品，关键信息不记忆 ----
+watch(
+  [() => form.customer, () => form.product],
+  () => {
+    saveForm('ai', { customer: form.customer, product: form.product })
+  },
+)
+
+onMounted(() => {
+  const saved = loadForm('ai')
+  if (!saved) return
+  if (typeof saved.customer === 'string') form.customer = saved.customer
+  if (typeof saved.product === 'string') form.product = saved.product
+})
 
 const loading = ref(false)
 const output = ref('')
