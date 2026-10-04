@@ -21,7 +21,7 @@
         <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
         <view class="muted">运输方式：{{ transportText(item) }}</view>
         <view class="record-summary">
-          <text>{{ termOf(item) }} {{ codeOf(item) }} {{ fmt(item.unitPrice) }}</text>
+          <text>{{ codeOf(item) }} 单价 {{ fmt(item.unitPrice) }}</text>
           <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
         </view>
       </view>
@@ -36,23 +36,20 @@
           <text class="result-value">¥ {{ fmt(item.result.totalCost) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">贸易术语</text>
-          <text class="result-value">{{ termOf(item) }}</text>
+          <text class="field-label">{{ termsOf(item).base }} 总价</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.fobTotal) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">{{ termOf(item) }} 单价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(priceOf(item).unit) }} / 件</text>
+          <text class="field-label">{{ termsOf(item).freight }} 总价</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cfrTotal) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">{{ termOf(item) }} 总价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(priceOf(item).total) }}</text>
+          <text class="field-label">{{ termsOf(item).insured }} 总价</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cifTotal) }}</text>
         </view>
-        <view class="result-line" v-if="isInsured(item)">
+        <view class="result-line">
           <text class="field-label">保险费</text>
           <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.insurance) }}</text>
-        </view>
-        <view class="muted ins-note" v-if="!isInsured(item)">
-          保险费 {{ codeOf(item) }} {{ fmt(item.result.insurance) }}（未计入所选术语报价）
         </view>
         <view class="result-line">
           <text class="field-label">换汇成本</text>
@@ -79,7 +76,7 @@ import { onShow } from '@dcloudio/uni-app'
 import { getHistory, removeRecord, clearHistory } from '../../utils/storage.js'
 import { formatNumber } from '../../utils/calc.js'
 import { getCurrency } from '../../utils/currency.js'
-import { MULTIMODAL, modeShortName, termNames, mapTermLevel } from '../../utils/transport.js'
+import { MULTIMODAL, modeShortName, termNames } from '../../utils/transport.js'
 
 const list = ref([])
 const expandedId = ref('')
@@ -110,25 +107,9 @@ function transportText(item) {
   return modeShortName(code)
 }
 
-// 所选贸易术语：新记录存 tradeTerm；旧记录用 term 兜底；都没有则按运输方式取基础术语
-function termOf(item) {
-  const raw = String((item && (item.tradeTerm || item.term)) || '').toUpperCase()
-  if (raw) return raw
-  return termNames((item && item.transportMode) || 'SEA_FCL').base
-}
-
-// 所选术语对应的单价/总价（旧记录只有 FOB/FCA 单价）
-function priceOf(item) {
-  const r = (item && item.result) || {}
-  const qty = Number(r.qty) || 0
-  const level = mapTermLevel(termOf(item))
-  if (level === 'freight') return { unit: qty ? r.cfrTotal / qty : 0, total: r.cfrTotal }
-  if (level === 'insured') return { unit: qty ? r.cifTotal / qty : 0, total: r.cifTotal }
-  return { unit: r.fobUnit, total: r.fobTotal }
-}
-
-function isInsured(item) {
-  return mapTermLevel(termOf(item)) === 'insured'
+// 贸易术语随运输方式切换：海运类 FOB/CFR/CIF，其余 FCA/CPT/CIP（旧记录按海运兜底）
+function termsOf(item) {
+  return termNames((item && item.transportMode) || 'SEA_FCL')
 }
 
 function formatTime(ts) {
@@ -198,8 +179,5 @@ function onClear() {
   margin-top: 20rpx;
   padding-top: 16rpx;
   border-top: 1rpx solid #f0f1f3;
-}
-.ins-note {
-  padding-top: 12rpx;
 }
 </style>

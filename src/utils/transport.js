@@ -60,37 +60,6 @@ export function termNames(code) {
     : { base: 'FCA', freight: 'CPT', insured: 'CIP' }
 }
 
-const SEA_TERMS = [
-  { code: 'FOB', level: 'base', name: 'FOB（船上交货）' },
-  { code: 'CFR', level: 'freight', name: 'CFR（成本加运费）' },
-  { code: 'CIF', level: 'insured', name: 'CIF（成本加保险费、运费）' },
-]
-const NON_SEA_TERMS = [
-  { code: 'FCA', level: 'base', name: 'FCA（货交承运人）' },
-  { code: 'CPT', level: 'freight', name: 'CPT（运费付至）' },
-  { code: 'CIP', level: 'insured', name: 'CIP（运费加保险费付至）' },
-]
-
-/** 按运输方式返回可选贸易术语：海运类 FOB/CFR/CIF，非海运 FCA/CPT/CIP */
-export function termOptions(modeCode) {
-  return isSeaMode(modeCode) ? SEA_TERMS : NON_SEA_TERMS
-}
-
-/** 术语所属层级：base（FOB/FCA）、freight（CFR/CPT）、insured（CIF/CIP）；未知按 base */
-export function mapTermLevel(termCode) {
-  const c = String(termCode || '').toUpperCase()
-  if (c === 'CFR' || c === 'CPT') return 'freight'
-  if (c === 'CIF' || c === 'CIP') return 'insured'
-  return 'base'
-}
-
-/** 按层级取该运输方式下的术语代码；层级非法时回退该方式首个术语 */
-export function termByLevel(modeCode, level) {
-  const opts = termOptions(modeCode)
-  const hit = opts.find((o) => o.level === level)
-  return (hit || opts[0]).code
-}
-
 /** 运费输入框标签，随运输方式变化 */
 export function freightLabel(code) {
   const c = String(code || '').toUpperCase()
