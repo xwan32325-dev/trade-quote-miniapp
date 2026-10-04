@@ -46,7 +46,27 @@
       <view class="card-title">汇率与利润</view>
       <view class="field">
         <text class="field-label">汇率（1 USD = ? ¥）</text>
-        <input class="field-input" type="digit" v-model="form.exchangeRate" />
+        <input class="field-input" type="digit" v-model="form.exchangeRate" @input="onRateInput" />
+      </view>
+      <view class="fx-bar">
+        <text v-if="fxStatus === 'loading'" class="fx-text fx-muted">⏳ 正在获取实时汇率…</text>
+
+        <template v-else-if="fxStatus === 'manual'">
+          <text class="fx-text fx-muted">⚪ 手动输入（未使用实时汇率)</text>
+          <text class="fx-action" @click="useLiveRate">用实时汇率</text>
+        </template>
+
+        <template v-else-if="fxStatus === 'error'">
+          <text class="fx-text fx-error">🔴 获取失败：{{ fx.error }}（沿用 {{ rateText }}，请手动确认）</text>
+          <text class="fx-action" @click="fetchFx()">重试</text>
+        </template>
+
+        <text v-else-if="fxStatus === 'stale'" class="fx-text fx-warn">🟠 实时源不可用，沿用 {{ rateText }}（请自行确认）</text>
+
+        <template v-else-if="fxStatus === 'success'">
+          <text class="fx-text fx-ok">🟢 实时 {{ rateText }}<text :class="fxChangeClass">{{ fxChangeText }}</text> · 数据日 {{ fxSourceDateShort }} · {{ fx.data.source }}</text>
+          <text class="fx-action" @click="fetchFx({ force: true })">刷新</text>
+        </template>
       </view>
       <view class="field">
         <text class="field-label">预期利润率</text>
@@ -138,9 +158,10 @@
 </template>
 
 <script setup>
-import { reactive, computed } from 'vue'
+import { reactive, computed, onMounted } from 'vue'
 import { calcQuote, formatNumber, safeNumber } from '../../utils/calc.js'
 import { saveRecord, makeId } from '../../utils/storage.js'
+import { getFxRate } from '../../utils/request.js'
 
 // 表单默认值（与 SPEC 一致）
 const form = reactive({
@@ -173,6 +194,86 @@ function div(a, b) {
   return Number.isFinite(r) ? r : 0
 }
 
+// ---- 实时汇率：进入页面自动获取，手动可覆盖 ----
+const fx = reactive({
+  loading: false,
+  manual: false, // 用户手动改过汇率，自动刷新不再覆盖
+  data: null, // 最近一次成功的返回对象
+  error: '', // 最近一次失败的 message
+})
+
+// 展示状态：手动优先，其次加载 / 失败 / 数据（成功或 stale）
+const fxStatus = computed(() => {
+  if (fx.manual) return 'manual'
+  if (fx.loading) return 'loading'
+  if (fx.error) return 'error'
+  if (fx.data) return fx.data.stale ? 'stale' : 'success'
+  return 'idle'
+})
+
+// 状态栏展示的汇率取当前输入框的值（成功/stale 已同步写入，失败时即用户现有值）
+const rateText = computed(() => fmt(form.exchangeRate, 4))
+
+const fxChangePct = computed(() => {
+  const v = fx.data && fx.data.changePct
+  return v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v)
+})
+
+const fxChangeText = computed(() => {
+  const p = fxChangePct.value
+  if (p === null) return ''
+  const arrow = p > 0 ? '↑' : p < 0 ? '↓' : ''
+  return arrow + formatNumber(Math.abs(p), 3) + '%'
+})
+
+// change > 0 用红色（人民币贬值）、change < 0 用绿色；changePct 为 null 时不显示
+const fxChangeClass = computed(() => {
+  if (fxChangePct.value === null) return ''
+  const c = fx.data && fx.data.change
+  const signed = Number.isFinite(Number(c)) ? Number(c) : fxChangePct.value
+  if (signed > 0) return 'fx-up'
+  if (signed < 0) return 'fx-down'
+  return ''
+})
+
+// "2026-10-02" → "10-02"
+function shortDate(s) {
+  const m = s && String(s).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return m ? m[2] + '-' + m[3] : s || ''
+}
+const fxSourceDateShort = computed(() => shortDate(fx.data && fx.data.sourceDate))
+
+// 拉取实时汇率；手动模式下不覆盖用户输入
+async function fetchFx({ force = false } = {}) {
+  if (fx.manual) return
+  fx.loading = true
+  fx.error = ''
+  try {
+    const data = await getFxRate({ force })
+    fx.data = data
+    if (!fx.manual) form.exchangeRate = Number(Number(data.rate).toFixed(4))
+  } catch (e) {
+    fx.error = (e && e.message) || '网络请求失败'
+  } finally {
+    fx.loading = false
+  }
+}
+
+// 用户开始手动输入 → 切到手动模式
+function onRateInput() {
+  fx.manual = true
+}
+
+// 点「用实时汇率」→ 退出手动模式并重新拉取覆盖
+function useLiveRate() {
+  fx.manual = false
+  fetchFx()
+}
+
+onMounted(() => {
+  fetchFx()
+})
+
 function onSave() {
   const r = result.value
   const record = {
@@ -194,12 +295,16 @@ function onCopyQuote() {
   const r = result.value
   const productName = form.productName || '未命名产品'
   const customerName = form.customerName || '未填写客户'
+  const rateLabel =
+    fx.manual || !fx.data
+      ? '手动'
+      : '实时' + (fx.data.sourceDate ? ' ' + shortDate(fx.data.sourceDate) : '')
   const text = [
     `【报价单】${productName} - ${customerName}`,
     `FOB 上海：USD ${fmt(r.fobUnit)}/件（总价 USD ${fmt(r.fobTotal)}）`,
     `CFR：USD ${fmt(div(r.cfrTotal, r.qty))}/件（总价 USD ${fmt(r.cfrTotal)}）`,
     `CIF：USD ${fmt(div(r.cifTotal, r.qty))}/件（总价 USD ${fmt(r.cifTotal)}）`,
-    `数量：${fmt(r.qty, 0)} 件 | 汇率：${fmt(form.exchangeRate, 4)} | 盈亏率：${fmt(r.profitPct, 2)}%`,
+    `数量：${fmt(r.qty, 0)} 件 | 汇率：${fmt(form.exchangeRate, 4)}（${rateLabel}） | 盈亏率：${fmt(r.profitPct, 2)}%`,
     '有效期：30 天',
   ].join('\n')
   uni.setClipboardData({
@@ -208,3 +313,43 @@ function onCopyQuote() {
   })
 }
 </script>
+
+<style scoped>
+/* 汇率状态栏：紧贴汇率输入框的小字提示 */
+.fx-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  padding: 8rpx 0 16rpx;
+}
+.fx-text {
+  flex: 1;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #4b5563;
+}
+.fx-action {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  color: #2563eb;
+  padding: 4rpx 14rpx;
+  border: 1rpx solid #bfdbfe;
+  border-radius: 8rpx;
+}
+.fx-muted {
+  color: #9ca3af;
+}
+.fx-warn {
+  color: #d97706;
+}
+.fx-error {
+  color: #dc2626;
+}
+.fx-up {
+  color: #dc2626;
+}
+.fx-down {
+  color: #16a34a;
+}
+</style>

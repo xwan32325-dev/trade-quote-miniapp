@@ -26,6 +26,41 @@ export function setApiBase(base) {
 }
 
 /**
+ * 获取实时汇率
+ * @param {{from?:string, to?:string, force?:boolean}} params force=true 绕过 30 分钟缓存
+ * @returns {Promise<{ok:boolean, base:string, quote:string, rate:number, previousRate:number,
+ *   change:number|null, changePct:number|null, source:string, sourceDate:string,
+ *   fetchedAt:string, stale:boolean, cached:boolean}>}
+ */
+export function getFxRate({ from = 'USD', to = 'CNY', force = false } = {}) {
+  const url =
+    getApiBase() +
+    '/api/fx?from=' +
+    encodeURIComponent(from) +
+    '&to=' +
+    encodeURIComponent(to) +
+    (force ? '&force=1' : '');
+  return new Promise((resolve, reject) => {
+    uni.request({
+      url,
+      method: 'GET',
+      success: (res) => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(res.data || {});
+        } else {
+          const data = res.data || {};
+          const msg = data.message || data.error || ('HTTP ' + res.statusCode);
+          reject(new Error(typeof msg === 'string' ? msg : JSON.stringify(msg)));
+        }
+      },
+      fail: (err) => {
+        reject(new Error((err && err.errMsg) || '网络请求失败'));
+      },
+    });
+  });
+}
+
+/**
  * 调用后端一次性生成接口（非流式）
  * @param {{system:string, input:string, tool?:string, model?:string}} payload
  * @returns {Promise<{text:string, elapsedMs?:number, tokens?:number}>}
