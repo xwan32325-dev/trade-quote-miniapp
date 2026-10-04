@@ -129,7 +129,10 @@
     </view>
 
     <view class="card">
-      <view class="btn" @click="onSave">保存到记录</view>
+      <view class="row">
+        <view class="btn" @click="onSave">保存到记录</view>
+        <view class="btn btn-ghost" @click="onCopyQuote">复制报价文本</view>
+      </view>
     </view>
   </view>
 </template>
@@ -185,5 +188,23 @@ function onSave() {
   }
   saveRecord(record)
   uni.showToast({ title: '已保存', icon: 'success' })
+}
+
+function onCopyQuote() {
+  const r = result.value
+  const productName = form.productName || '未命名产品'
+  const customerName = form.customerName || '未填写客户'
+  const text = [
+    `【报价单】${productName} - ${customerName}`,
+    `FOB 上海：USD ${fmt(r.fobUnit)}/件（总价 USD ${fmt(r.fobTotal)}）`,
+    `CFR：USD ${fmt(div(r.cfrTotal, r.qty))}/件（总价 USD ${fmt(r.cfrTotal)}）`,
+    `CIF：USD ${fmt(div(r.cifTotal, r.qty))}/件（总价 USD ${fmt(r.cifTotal)}）`,
+    `数量：${fmt(r.qty, 0)} 件 | 汇率：${fmt(form.exchangeRate, 4)} | 盈亏率：${fmt(r.profitPct, 2)}%`,
+    '有效期：30 天',
+  ].join('\n')
+  uni.setClipboardData({
+    data: text,
+    success: () => uni.showToast({ title: '已复制', icon: 'success' }),
+  })
 }
 </script>
