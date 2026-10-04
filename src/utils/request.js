@@ -105,3 +105,32 @@ export function runOnce(payload) {
     });
   });
 }
+
+/**
+ * 识别单据图片（采购单/发票/装箱单）→ 结构化字段
+ * @param {string} imageDataUrl data:image/jpeg;base64,...
+ * @returns {Promise<{ok?:boolean, fields:object, raw?:string, elapsedMs?:number, tokens?:number, model?:string}>}
+ */
+export function parseImage(imageDataUrl) {
+  return new Promise((resolve, reject) => {
+    uni.request({
+      url: getApiBase() + '/api/parse-image',
+      method: 'POST',
+      header: { 'Content-Type': 'application/json' },
+      data: { image: imageDataUrl },
+      timeout: 60000,
+      success: (res) => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(res.data || {});
+        } else {
+          const data = res.data || {};
+          const msg = data.message || data.error || ('HTTP ' + res.statusCode);
+          reject(new Error(typeof msg === 'string' ? msg : JSON.stringify(msg)));
+        }
+      },
+      fail: (err) => {
+        reject(new Error((err && err.errMsg) || '网络请求失败'));
+      },
+    });
+  });
+}

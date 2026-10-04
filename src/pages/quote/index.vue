@@ -2,6 +2,25 @@
 <template>
   <view class="page">
     <view class="card">
+      <view class="card-title">拍照填单</view>
+      <view class="ocr-btn" :class="{ 'ocr-btn-disabled': ocr.loading }" @click="onOcr">
+        {{ ocr.loading ? '识别中…' : '📷 拍照填单' }}
+      </view>
+      <view class="ocr-hint">拍采购单 / 发票 / 装箱单，自动识别产品、数量、单价、箱规</view>
+      <view class="ocr-thumb-wrap" v-if="ocr.thumb">
+        <image class="ocr-thumb" :src="ocr.thumb" mode="aspectFill" />
+        <text v-if="ocr.loading" class="ocr-thumb-tip">识别中…</text>
+      </view>
+      <view class="ocr-error" v-if="ocr.error">{{ ocr.error }}</view>
+      <view class="ocr-result" v-if="ocr.filled.length || ocr.missing.length || ocr.notes">
+        <view class="ocr-ok" v-if="ocr.filled.length">✅ 已填入：{{ ocr.filled.join('、') }}</view>
+        <view class="ocr-miss" v-if="ocr.missing.length">未识别到：{{ ocr.missing.join('、') }}</view>
+        <view class="ocr-note" v-if="ocr.notes">单据备注：{{ ocr.notes }}</view>
+        <view class="ocr-sync" v-if="ocr.cartonSynced">箱规已同步到装柜页</view>
+      </view>
+    </view>
+
+    <view class="card">
       <view class="card-title">基础信息</view>
       <view class="field">
         <text class="field-label">产品名称</text>
@@ -297,7 +316,8 @@
 import { reactive, computed, onMounted, watch } from 'vue'
 import { formatNumber, safeNumber } from '../../utils/calc.js'
 import { saveRecord, makeId, saveForm, loadForm } from '../../utils/storage.js'
-import { getFxRate } from '../../utils/request.js'
+import { getFxRate, parseImage } from '../../utils/request.js'
+import { pickImageAsDataUrl } from '../../utils/image.js'
 import { CURRENCIES, getCurrency, rateDecimals } from '../../utils/currency.js'
 import {
   TRANSPORT_MODES,
@@ -650,6 +670,121 @@ function useLiveRate() {
   fetchFx()
 }
 
+// ---- 拍照填单：选图 → 识别 → 只填识别到的字段 ----
+const ocr = reactive({
+  loading: false,
+  thumb: '', // 选中图片的 data URL（缩略图）
+  error: '', // 后端返回的错误信息
+  filled: [], // 实际填入的字段名
+  missing: [], // 未识别到的关键字段名
+  notes: '', // 单据备注
+  cartonSynced: false, // 箱规/毛重是否已写入装柜页记忆
+})
+
+const hasValue = (v) => v !== null && v !== undefined && v !== ''
+
+/** 把识别结果按字段映射写入表单；null 跳过，不动用户其他已填内容 */
+function applyOcrFields(fields) {
+  const filled = []
+  const missing = []
+  let cartonSynced = false
+
+  // 产品名 / 客户名
+  if (hasValue(fields.productName)) {
+    form.productName = String(fields.productName)
+    filled.push('产品名')
+  } else missing.push('产品名')
+  if (hasValue(fields.customerName)) {
+    form.customerName = String(fields.customerName)
+    filled.push('客户名')
+  } else missing.push('客户名')
+
+  // 数量 / 单价（采购成本含税）
+  if (hasValue(fields.qty)) {
+    form.qty = fields.qty
+    filled.push('数量')
+  } else missing.push('数量')
+  if (hasValue(fields.price)) {
+    form.price = fields.price
+    filled.push('单价')
+  } else missing.push('单价')
+
+  // 税率
+  if (hasValue(fields.vatRate)) {
+    form.vatRate = fields.vatRate
+    filled.push('增值税率')
+  } else missing.push('增值税率')
+  if (hasValue(fields.rebateRate)) {
+    form.rebateRate = fields.rebateRate
+    filled.push('退税率')
+  } else missing.push('退税率')
+
+  // 币种：仅当在 CURRENCIES 表内才采纳，并重拉该币种实时汇率
+  if (hasValue(fields.currency)) {
+    const code = String(fields.currency).toUpperCase()
+    if (CURRENCIES.some((c) => c.code === code)) {
+      form.currency = code
+      form.manualUnitPrice = '' // 换币种 → 清空手动价，避免口径错乱
+      fx.manual = false
+      fx.data = null
+      fetchFx({ force: true })
+      filled.push('币种')
+    } else {
+      missing.push('币种')
+    }
+  } else missing.push('币种')
+
+  // 箱规 + 毛重 → 合并写入装柜页记忆（字段名为 length/width/height/grossWeight）
+  const hasCarton = hasValue(fields.cartonL) || hasValue(fields.cartonW) || hasValue(fields.cartonH)
+  const saved = loadForm('loading') || {}
+  if (hasValue(fields.cartonL)) saved.length = fields.cartonL
+  if (hasValue(fields.cartonW)) saved.width = fields.cartonW
+  if (hasValue(fields.cartonH)) saved.height = fields.cartonH
+  if (hasValue(fields.grossWeight)) saved.grossWeight = fields.grossWeight
+  if (hasCarton || hasValue(fields.grossWeight)) {
+    saveForm('loading', saved)
+    cartonSynced = true
+  }
+  if (hasCarton) filled.push('箱规')
+  else missing.push('箱规')
+  if (hasValue(fields.grossWeight)) filled.push('毛重')
+  else missing.push('毛重')
+
+  ocr.filled = filled
+  ocr.missing = missing
+  ocr.notes = hasValue(fields.notes) ? String(fields.notes) : ''
+  ocr.cartonSynced = cartonSynced
+}
+
+async function onOcr() {
+  if (ocr.loading) return
+  ocr.error = ''
+  ocr.filled = []
+  ocr.missing = []
+  ocr.notes = ''
+  ocr.cartonSynced = false
+
+  let dataUrl
+  try {
+    dataUrl = await pickImageAsDataUrl()
+  } catch (e) {
+    ocr.error = (e && e.message) || '选择图片失败'
+    return
+  }
+  if (!dataUrl) return // 用户取消
+
+  ocr.thumb = dataUrl
+  ocr.loading = true
+  try {
+    const res = await parseImage(dataUrl)
+    applyOcrFields(res.fields || {})
+  } catch (e) {
+    ocr.error = (e && e.message) || '识别失败'
+  } finally {
+    ocr.loading = false
+  }
+}
+
 // 常用税率一键选（点击直接填入，当前值高亮）
 const VAT_RATES = [13, 9, 6]
 const REBATE_RATES = [13, 10, 9, 6, 0]
@@ -779,6 +914,82 @@ function onCopyQuote() {
 </script>
 
 <style scoped>
+/* ---- 拍照填单 ---- */
+.ocr-btn {
+  margin-top: 12rpx;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #ffffff;
+  background: #2563eb;
+  border-radius: 12rpx;
+  padding: 24rpx 0;
+}
+.ocr-btn-disabled {
+  background: #93b4f3;
+}
+.ocr-hint {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #9ca3af;
+  padding-top: 12rpx;
+}
+.ocr-thumb-wrap {
+  position: relative;
+  margin-top: 16rpx;
+  width: 220rpx;
+  height: 220rpx;
+  border-radius: 12rpx;
+  overflow: hidden;
+  border: 1rpx solid #e5e7eb;
+}
+.ocr-thumb {
+  width: 100%;
+  height: 100%;
+}
+.ocr-thumb-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  font-size: 22rpx;
+  line-height: 1.6;
+  text-align: center;
+  color: #ffffff;
+  background: rgba(17, 24, 39, 0.6);
+}
+.ocr-error {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: #dc2626;
+}
+.ocr-result {
+  margin-top: 16rpx;
+  padding-top: 12rpx;
+  border-top: 1rpx dashed #e5e7eb;
+}
+.ocr-ok {
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #16a34a;
+}
+.ocr-miss {
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #d97706;
+}
+.ocr-note {
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #4b5563;
+}
+.ocr-sync {
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: #2563eb;
+}
+
 /* 币种选择：picker 包裹的 field 需要补回底部分隔线 */
 picker .field {
   border-bottom: 1rpx solid #f0f1f3;

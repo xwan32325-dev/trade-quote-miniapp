@@ -100,6 +100,7 @@ function serveStatic(req, res) {
 const ALLOWED_APIS = [
   { method: 'GET', path: '/api/fx' },
   { method: 'POST', path: '/api/run-once' },
+  { method: 'POST', path: '/api/parse-image' },
 ];
 
 function isAllowedApi(method, url) {
