@@ -60,6 +60,69 @@ function sanitizeNumbers(obj) {
   return out
 }
 
+/** 取一行明细的采购含税价（兼容 price / unitPrice 两种字段名） */
+function itemPrice(it) {
+  if (!it) return 0
+  return safeNumber(it.price !== undefined && it.price !== null ? it.price : it.unitPrice)
+}
+
+/** 总数量：多产品明细取各行数量之和，否则取扁平 qty */
+function totalQty(input) {
+  const items = input && input.items
+  if (Array.isArray(items) && items.length) {
+    return items.reduce((sum, it) => sum + safeNumber(it && it.qty), 0)
+  }
+  return safeNumber(input && input.qty)
+}
+
+/** 单行退税额/件 = 采购含税价 ÷ (1 + 该行增值税率/100) × 该行退税率/100 */
+function itemRefundPerUnit(it) {
+  const vatRate = safeNumber(it && it.vatRate)
+  const rebateRate = safeNumber(it && it.rebateRate)
+  return safeDivide(itemPrice(it), 1 + vatRate / 100) * (rebateRate / 100)
+}
+
+/** 单行货值¥ = (采购含税价 − 退税额/件) × 该行数量 */
+function itemGoodsValue(it) {
+  return (itemPrice(it) - itemRefundPerUnit(it)) * safeNumber(it && it.qty)
+}
+
+/** 保留 2 位小数（-0 归一为 0） */
+function round2(v) {
+  const r = Math.round(safeNumber(v) * 100) / 100
+  return r === 0 ? 0 : r
+}
+
+/**
+ * 按货值占比把整单总价分摊到各行（口径见 TASK-MULTIITEM.md 第一节）
+ *   行占比 = 行货值 / 整单货值（整单货值为 0 时占比为 0，不出现 NaN）
+ *   行总价 = 整单总价 × 行占比，最后一行用「整单总价 − 前面各行之和」兜底，
+ *   保证四舍五入后明细合计 = 整单合计
+ * @param {Array<{productName?:string, qty:number, price?:number, unitPrice?:number, vatRate?:number, rebateRate?:number}>} items
+ * @param {number|string} totalPrice 整单总价（外币）
+ * @returns {Array<{productName:string, qty:number, unitPrice:number, totalPrice:number}>}
+ */
+export function allocateItems(items, totalPrice) {
+  const list = Array.isArray(items) ? items : []
+  const goods = list.map(itemGoodsValue)
+  const goodsTotal = goods.reduce((sum, v) => sum + v, 0)
+  const total = round2(totalPrice)
+  let allocated = 0
+  return list.map((it, i) => {
+    const qty = safeNumber(it && it.qty)
+    const share = goodsTotal > 0 ? goods[i] / goodsTotal : 0
+    const isLast = i === list.length - 1
+    const rowTotal = isLast ? round2(total - allocated) : round2(total * share)
+    allocated = round2(allocated + rowTotal)
+    return {
+      productName: it && it.productName ? String(it.productName) : '',
+      qty,
+      unitPrice: round2(safeDivide(rowTotal, qty)),
+      totalPrice: rowTotal,
+    }
+  })
+}
+
 /** 按代码查术语，找不到返回 null */
 export function getIncoterm(code) {
   const c = String(code || '').toUpperCase()
@@ -116,10 +179,11 @@ export function remapTerm(term, fromMode, toMode) {
  * @returns 该术语下的金额与指标，以及换汇成本/盈亏率（固定 FOB 口径）
  */
 export function calcTermQuote(input = {}) {
-  const price = safeNumber(input.price) // 采购含税价 ¥/件
-  const qty = safeNumber(input.qty) // 数量
-  const vatRate = safeNumber(input.vatRate) // 增值税率 %
-  const rebateRate = safeNumber(input.rebateRate) // 退税率 %
+  const items = Array.isArray(input.items) && input.items.length ? input.items : null
+  const price = safeNumber(input.price) // 采购含税价 ¥/件（单产品口径；兼容旧调用）
+  const qty = totalQty(input) // 数量：多产品明细为各行数量之和
+  const vatRate = safeNumber(input.vatRate) // 增值税率 %（单产品口径；兼容旧调用）
+  const rebateRate = safeNumber(input.rebateRate) // 退税率 %（单产品口径；兼容旧调用）
   const domesticFee = safeNumber(input.domesticFee) // 国内费用合计 ¥ 整票（由页面把 7 项明细累加后传入）
   const exchangeRate = safeNumber(input.exchangeRate) // 汇率 1 外币 = ? ¥
   const profitRate = safeNumber(input.profitRate) // 利润率 %
@@ -133,11 +197,22 @@ export function calcTermQuote(input = {}) {
   const term = String(input.tradeTerm || input.term || 'FOB').toUpperCase()
   const inc = termIncludes(term)
 
-  // 退税额/件 = 采购含税价 / (1 + 增值税率/100) × (退税率/100)
-  const refundPerUnit = safeDivide(price, 1 + vatRate / 100) * (rebateRate / 100)
-  const refundTotal = refundPerUnit * qty
-  // 货值成本¥ = (采购含税价 - 退税额/件) × 数量      ← EXW 基数
-  const goodsValue = (price - refundPerUnit) * qty
+  // 退税额与货值成本：多产品明细按各行自己的增值税率/退税率逐行计算再求和；
+  // 单产品沿用扁平字段（结果与改动前逐字节一致）
+  let refundPerUnit, refundTotal, goodsValue
+  if (items) {
+    // 逐行用「(采购含税价 − 该行退税额/件) × 数量」求和，与单产品公式同形，
+    // 单行时结果与改动前逐字节一致
+    refundTotal = items.reduce((sum, it) => sum + itemRefundPerUnit(it) * safeNumber(it.qty), 0)
+    goodsValue = items.reduce((sum, it) => sum + itemGoodsValue(it), 0)
+    refundPerUnit = safeDivide(refundTotal, qty)
+  } else {
+    // 退税额/件 = 采购含税价 / (1 + 增值税率/100) × (退税率/100)
+    refundPerUnit = safeDivide(price, 1 + vatRate / 100) * (rebateRate / 100)
+    refundTotal = refundPerUnit * qty
+    // 货值成本¥ = (采购含税价 - 退税额/件) × 数量      ← EXW 基数
+    goodsValue = (price - refundPerUnit) * qty
+  }
   // 含国内成本¥ = 货值成本¥ + 国内费用合计            ← 其余术语基数（EXW 不含）
   const withDomestic = goodsValue + domesticFee
   // 基准价$：EXW 用货值成本，其余用含国内成本
@@ -197,12 +272,13 @@ export function calcTermQuote(input = {}) {
  * 手填单价 U 后：先求成本基准（利润率置 0 的 calcTermQuote 单价 U0$）得 C$ = U0$ × Q，
  * 再反算利润额与成本加成率；最后按术语扣掉相对 FOB 的附加费用得到 FOB 净收入，
  * 算换汇成本与盈亏率。不改动 calcTermQuote，只额外以「利润率置 0」调用一次。
- * @param {object} input 与 calcTermQuote 相同（含 tradeTerm / qty / exchangeRate / domesticFee 等，domesticFee 为 7 项明细合计）
- * @param {number|string} manualUnitPrice 手动单价 U（外币/件）
+ * @param {object} input 与 calcTermQuote 相同（含 tradeTerm / qty / exchangeRate / domesticFee 等，domesticFee 为 7 项明细合计；多产品时传 items）
+ * @param {number|string} manualPrice 手动价：单产品为单价 U（外币/件），isTotal=true 时为整单总价 T（外币）
+ * @param {boolean} [isTotal] true 表示 manualPrice 直接作为整单总价（由页面在明细多于 1 行时传入）
  * @returns 反算指标；所有数值字段保证有限（无 NaN / Infinity）
  */
-export function calcManualTermQuote(input = {}, manualUnitPrice) {
-  const qty = safeNumber(input.qty)
+export function calcManualTermQuote(input = {}, manualPrice, isTotal = false) {
+  const qty = totalQty(input)
   const exchangeRate = safeNumber(input.exchangeRate)
   const insuranceRate = safeNumber(input.insuranceRate)
   const markupRate = safeNumber(input.markupRate)
@@ -214,8 +290,9 @@ export function calcManualTermQuote(input = {}, manualUnitPrice) {
   const costTotal = cost.unitPrice * qty
 
   // 手动总价 T$、利润额与成本加成率（C$ 为 0 时返回 0）
-  const manualUnit = safeNumber(manualUnitPrice)
-  const manualTotal = manualUnit * qty
+  // isTotal=true（多产品明细）：手填值即整单总价；否则按单价 × 数量
+  const manualUnit = isTotal ? safeDivide(safeNumber(manualPrice), qty) : safeNumber(manualPrice)
+  const manualTotal = isTotal ? safeNumber(manualPrice) : manualUnit * qty
   const profitAmount = manualTotal - costTotal
   const markupPct = safeDivide(profitAmount, costTotal) * 100
 

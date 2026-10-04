@@ -156,5 +156,30 @@ close('FOB 明细 +1200 → 成本基准总价 +1200/汇率', mD1.costTotal - mD
 const mDExw = calcManualTermQuote(withFees(bumpedFees, { tradeTerm: 'EXW' }), 20)
 close('EXW 明细 +1200 → 附加费用 = -(明细合计)/汇率', mDExw.extra, -(sumFees(bumpedFees)) / D.exchangeRate, 1e-9)
 
+console.log('\n===== 用例 9：多产品明细 —— 手动定价作用于整单总价 =====')
+// 3 行明细，数量合计 1700；isTotal=true 时手填值即整单总价
+const ITEMS = [
+  { productName: '主产品', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 },
+  { productName: '配件', qty: 500, price: 200, vatRate: 9, rebateRate: 9 },
+  { productName: '包装', qty: 200, price: 50, vatRate: 6, rebateRate: 0 },
+]
+const QTY = ITEMS.reduce((s, it) => s + it.qty, 0)
+const mTotal = calcManualTermQuote({ ...D, items: ITEMS, tradeTerm: 'FOB' }, 5000, true)
+close('isTotal=true → 手动总价 = 输入值', mTotal.manualTotal, 5000, 1e-9)
+close('isTotal=true → 折算单价 = 输入值 / 明细总数量', mTotal.manualUnit, 5000 / QTY, 1e-9)
+// isTotal=false（单产品口径）仍按单价 × 数量
+const mUnit = calcManualTermQuote({ ...D, items: ITEMS, tradeTerm: 'FOB' }, 3, false)
+close('isTotal=false → 手动总价 = 输入单价 × 明细总数量', mUnit.manualTotal, 3 * QTY, 1e-9)
+// 成本基准来自 items（Σ 各行货值），不是首行 × 数量
+const costItems = calcTermQuote({ ...D, items: ITEMS, tradeTerm: 'FOB', profitRate: 0 })
+const lineGoods = (it) => (it.price - it.price / (1 + it.vatRate / 100) * (it.rebateRate / 100)) * it.qty
+const sumGoods = ITEMS.reduce((s, it) => s + lineGoods(it), 0)
+close('多行成本基准货值 = Σ 各行货值', costItems.goodsValue, sumGoods, 1e-6)
+// 手填整单总价 = 成本基准总价（利润率置 0）→ 成本加成率 0
+close('整单手动价=成本基准总价 → 成本加成率 0', calcManualTermQuote({ ...D, items: ITEMS, tradeTerm: 'FOB', profitRate: 0 }, costItems.unitPrice * QTY, true).markupPct, 0, 1e-9)
+// 数量 0 边界不出现 NaN
+const z = calcManualTermQuote({ ...D, items: ITEMS.map((it) => ({ ...it, qty: 0 })), tradeTerm: 'DDP' }, 100, true)
+ok('多行数量 0 → 手动反算全部有限', Object.keys(z).every((k) => typeof z[k] !== 'number' || Number.isFinite(z[k])))
+
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

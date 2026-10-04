@@ -15,13 +15,14 @@
     <view class="card" v-for="item in list" :key="item.id">
       <view @click="toggle(item.id)">
         <view class="record-head">
-          <text class="record-title">{{ item.productName }}</text>
+          <text class="record-title">{{ titleOf(item) }}</text>
           <text class="muted">{{ formatTime(item.createdAt) }}</text>
         </view>
         <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
         <view class="muted">运输方式：{{ transportText(item) }}</view>
         <view class="record-summary">
-          <text>{{ termOf(item) }} 单价 {{ codeOf(item) }} {{ fmt(item.unitPrice) }}</text>
+          <text v-if="itemsOf(item).length <= 1">{{ termOf(item) }} 单价 {{ codeOf(item) }} {{ fmt(item.unitPrice) }}</text>
+          <text v-else>{{ termOf(item) }} 整单（{{ itemsOf(item).length }} 项）</text>
           <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
         </view>
       </view>
@@ -31,13 +32,20 @@
           <text class="field-label">贸易方式</text>
           <text class="result-value">{{ termLabel(termOf(item)) }}</text>
         </view>
-        <view class="result-line">
+        <view class="result-line" v-if="itemsOf(item).length <= 1">
           <text class="field-label">{{ termOf(item) }} 单价</text>
           <text class="result-value">{{ codeOf(item) }} {{ fmt(item.unitPrice) }} / 件</text>
         </view>
         <view class="result-line">
-          <text class="field-label">{{ termOf(item) }} 总价</text>
+          <text class="field-label">{{ termOf(item) }} 整单总价</text>
           <text class="result-value">{{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
+        </view>
+        <!-- 多产品：逐行列出分摊后的明细 -->
+        <view class="items" v-if="itemsOf(item).length > 1">
+          <view class="item-line" v-for="(row, i) in itemsOf(item)" :key="i">
+            <text class="item-name">{{ i + 1 }}. {{ row.productName || '未命名产品' }}</text>
+            <text class="item-calc">{{ fmt(row.qty, 0) }} 件 × {{ codeOf(item) }} {{ fmt(row.unitPrice) }} = {{ codeOf(item) }} {{ fmt(row.totalPrice) }}</text>
+          </view>
         </view>
         <view class="result-line">
           <text class="field-label">货值成本</text>
@@ -71,9 +79,7 @@
           <text class="field-label">盈亏率</text>
           <text class="result-value">{{ fmt(item.result.profitPct) }}%</text>
         </view>
-        <view class="muted" style="margin-top: 12rpx">
-          输入：{{ item.input.price }} 元/件 · {{ item.input.qty }} 件 · 汇率 {{ item.input.exchangeRate }} · 利润率 {{ item.input.profitRate }}%
-        </view>
+        <view class="muted" style="margin-top: 12rpx">输入：{{ inputText(item) }}</view>
         <view class="row" style="margin-top: 20rpx">
           <view class="btn btn-danger" @click.stop="onDelete(item.id)">删除这条</view>
         </view>
@@ -134,6 +140,29 @@ function includesOf(item) {
 function costBaseOf(item) {
   const r = (item && item.result) || {}
   return r.costBase !== undefined ? r.costBase : r.totalCost
+}
+
+// 记录明细：新记录有 items[]；旧记录无（或空）时按空数组处理
+function itemsOf(item) {
+  return item && Array.isArray(item.items) ? item.items : []
+}
+
+// 记录标题：多行显示「第一款名 等 N 项」；单行/旧记录直接显示产品名
+function titleOf(item) {
+  const items = itemsOf(item)
+  if (items.length > 1) {
+    return `${items[0].productName || '未命名产品'} 等 ${items.length} 项`
+  }
+  return (item && item.productName) || '未命名产品'
+}
+
+// 输入摘要：多产品按明细数组描述，单产品沿用旧的 price/qty
+function inputText(item) {
+  const input = (item && item.input) || {}
+  const items = Array.isArray(input.items) && input.items.length ? input.items : null
+  const qty = items ? items.reduce((s, it) => s + Number(it.qty || 0), 0) : input.qty
+  const head = items ? `${items.length} 个产品 · 合计 ${qty} 件` : `${input.price} 元/件 · ${input.qty} 件`
+  return `${head} · 汇率 ${input.exchangeRate} · 利润率 ${input.profitRate}%`
 }
 
 function formatTime(ts) {
@@ -203,5 +232,30 @@ function onClear() {
   margin-top: 20rpx;
   padding-top: 16rpx;
   border-top: 1rpx solid #f0f1f3;
+}
+/* 多产品明细行 */
+.items {
+  margin-top: 12rpx;
+  padding-top: 12rpx;
+  border-top: 1rpx dashed #e5e7eb;
+}
+.item-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12rpx;
+  padding: 6rpx 0;
+  font-size: 24rpx;
+  color: #4b5563;
+}
+.item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.item-calc {
+  flex-shrink: 0;
+  color: #111827;
 }
 </style>

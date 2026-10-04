@@ -15,10 +15,10 @@ const src =
     load('../src/utils/transport.js'),
     load('../src/utils/incoterms.js'),
   ].join('\n') +
-  '\nexport { calcTermQuote, termsForMode, defaultTerm, remapTerm, isValidTerm, termLabel, getIncoterm, termIncludes, INCOTERMS, isSeaMode };'
+  '\nexport { calcTermQuote, allocateItems, termsForMode, defaultTerm, remapTerm, isValidTerm, termLabel, getIncoterm, termIncludes, INCOTERMS, isSeaMode };'
 
 const mod = await import('data:text/javascript,' + encodeURIComponent(src))
-const { calcTermQuote, termsForMode, defaultTerm, remapTerm, isValidTerm, termIncludes, INCOTERMS, isSeaMode } = mod
+const { calcTermQuote, allocateItems, termsForMode, defaultTerm, remapTerm, isValidTerm, termIncludes, INCOTERMS, isSeaMode } = mod
 
 let pass = 0
 let fail = 0
@@ -188,6 +188,63 @@ for (const t of INCOTERMS) {
     gt(`默认参数 ${t.code} 明细计入 → 总价增加`, b.totalPrice, a.totalPrice)
   }
 }
+
+console.log('\n===== 用例 9：多产品明细 —— 各行按自身税率算货值，合计 = Σ 各行 =====')
+// 3 行，各自不同的增值税率/退税率，验证「退税额/件 用该行税率」而非整单
+const ITEMS = [
+  { productName: '主产品', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 },
+  { productName: '配件', qty: 500, price: 200, vatRate: 9, rebateRate: 9 },
+  { productName: '包装', qty: 200, price: 50, vatRate: 6, rebateRate: 0 },
+]
+const lineGoods = (it) => (it.price - it.price / (1 + it.vatRate / 100) * (it.rebateRate / 100)) * it.qty
+const sumGoods = ITEMS.reduce((s, it) => s + lineGoods(it), 0)
+const sumQty = ITEMS.reduce((s, it) => s + it.qty, 0)
+const rItems = calcTermQuote({ ...DEFAULTS, items: ITEMS, tradeTerm: 'FOB' })
+close('多行货值 = Σ 各行货值', rItems.goodsValue, sumGoods, 1e-6)
+eq('多行总数量 = Σ 各行数量', rItems.qty, 1700)
+ok('多行货值 ≠ 直接把首行税率套用到整单',
+  Math.abs(rItems.goodsValue - ((100 - 100 / 1.13 * 0.13) * sumQty)) > 1,
+  `多行=${rItems.goodsValue.toFixed(2)} 首行口径=${((100 - 100 / 1.13 * 0.13) * sumQty).toFixed(2)}`)
+// 与「等效单行」（税率置 0、单价 = 总货值/总数量）总价一致
+const rEquiv = calcTermQuote({ ...DEFAULTS, price: sumGoods / sumQty, qty: sumQty, vatRate: 0, rebateRate: 0, tradeTerm: 'FOB' })
+close('多行 ≡ 等效单行（货值相同 → 总价相同）', rItems.totalPrice, rEquiv.totalPrice, 1e-6)
+// 多行下所有结果字段均有限
+const badItems = Object.keys(rItems).filter((k) => typeof rItems[k] === 'number' && !Number.isFinite(rItems[k]))
+ok('多行结果全部数值有限', badItems.length === 0, badItems.join(','))
+// 数量全为 0 → 不得出现 NaN
+const zItems = calcTermQuote({ ...DEFAULTS, items: ITEMS.map((it) => ({ ...it, qty: 0 })), tradeTerm: 'FOB' })
+ok('多行数量 0 → 单价有限且为 0', zItems.unitPrice === 0 && Number.isFinite(zItems.totalPrice))
+
+// 单行 items ≡ 扁平字段（逐字节）——页面默认就是 1 行明细，升级后数值必须与改动前完全一致
+const oneFlat = calcTermQuote({ ...DEFAULTS, tradeTerm: 'CIF' })
+const oneItems = calcTermQuote({
+  ...DEFAULTS, tradeTerm: 'CIF',
+  items: [{ productName: '', qty: DEFAULTS.qty, price: DEFAULTS.price, vatRate: DEFAULTS.vatRate, rebateRate: DEFAULTS.rebateRate }],
+})
+ok('单行 items ≡ 扁平字段（逐字节）',
+  oneItems.totalPrice === oneFlat.totalPrice && oneItems.unitPrice === oneFlat.unitPrice && oneItems.goodsValue === oneFlat.goodsValue,
+  `items=${oneItems.totalPrice} flat=${oneFlat.totalPrice}`)
+
+console.log('\n===== 用例 10：按货值占比分摊整单总价 =====')
+const rows = allocateItems(ITEMS, 14020.44)
+close('各行金额合计 = 整单总价（严格相等）', rows.reduce((s, r) => s + r.totalPrice, 0), 14020.44, 1e-9)
+close('第 1 行金额 = 整单 × 货值占比', rows[0].totalPrice, Math.round(14020.44 * (lineGoods(ITEMS[0]) / sumGoods) * 100) / 100, 1e-9)
+close('第 1 行单价 = 行金额 / 行数量', rows[0].unitPrice, Math.round((rows[0].totalPrice / 1000) * 100) / 100, 1e-9)
+ok('行单价 / 行金额均保留 2 位小数', rows.every((r) => Math.abs(r.unitPrice * 100 - Math.round(r.unitPrice * 100)) < 1e-9 && Math.abs(r.totalPrice * 100 - Math.round(r.totalPrice * 100)) < 1e-9))
+ok('产品名透传', rows[1].productName === '配件')
+// 三行等分 100 → 四舍五入后合计仍恰为 100（最后一行兜底）
+const third = allocateItems([
+  { productName: 'a', qty: 1, price: 1, vatRate: 0, rebateRate: 0 },
+  { productName: 'b', qty: 1, price: 1, vatRate: 0, rebateRate: 0 },
+  { productName: 'c', qty: 1, price: 1, vatRate: 0, rebateRate: 0 },
+], 100)
+close('三行等分 100 → 合计恰为 100', third.reduce((s, r) => s + r.totalPrice, 0), 100, 1e-9)
+close('最后一行 = 整单 − 前两行之和', third[2].totalPrice, 100 - third[0].totalPrice - third[1].totalPrice, 1e-9)
+// 整单货值为 0 → 占比 0，不得 NaN/Infinity
+const zeroGoods = allocateItems([{ productName: 'x', qty: 3, price: 0, vatRate: 13, rebateRate: 13 }], 500)
+ok('货值 0 → 行单价/行金额有限（无 NaN）', Number.isFinite(zeroGoods[0].unitPrice) && Number.isFinite(zeroGoods[0].totalPrice))
+close('货值 0、单行 → 金额兜底为整单总价，合计对得上', zeroGoods[0].totalPrice, 500, 1e-9)
+eq('空明细 → 空结果', allocateItems([], 100).length, 0)
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

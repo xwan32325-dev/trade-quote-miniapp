@@ -6,13 +6,14 @@
       <view class="ocr-btn" :class="{ 'ocr-btn-disabled': ocr.loading }" @click="onOcr">
         {{ ocr.loading ? '识别中…' : '📷 拍照填单' }}
       </view>
-      <view class="ocr-hint">拍采购单 / 发票 / 装箱单，自动识别产品、数量、单价、箱规</view>
+      <view class="ocr-hint">拍采购单 / 发票 / 装箱单，自动识别产品、数量、单价、箱规（支持多产品）</view>
       <view class="ocr-thumb-wrap" v-if="ocr.thumb">
         <image class="ocr-thumb" :src="ocr.thumb" mode="aspectFill" />
         <text v-if="ocr.loading" class="ocr-thumb-tip">识别中…</text>
       </view>
       <view class="ocr-error" v-if="ocr.error">{{ ocr.error }}</view>
       <view class="ocr-result" v-if="ocr.filled.length || ocr.missing.length || ocr.notes">
+        <view class="ocr-ok" v-if="ocr.multiCount > 1">✅ 已识别到 {{ ocr.multiCount }} 个产品，已替换当前明细</view>
         <view class="ocr-ok" v-if="ocr.filled.length">✅ 已填入：{{ ocr.filled.join('、') }}</view>
         <view class="ocr-miss" v-if="ocr.missing.length">未识别到：{{ ocr.missing.join('、') }}</view>
         <view class="ocr-note" v-if="ocr.notes">单据备注：{{ ocr.notes }}</view>
@@ -21,57 +22,68 @@
     </view>
 
     <view class="card">
-      <view class="card-title">基础信息</view>
-      <view class="field">
-        <text class="field-label">产品名称</text>
-        <input class="field-input" v-model="form.productName" placeholder="可留空" />
-      </view>
+      <view class="card-title">产品明细</view>
       <view class="field">
         <text class="field-label">客户名</text>
         <input class="field-input" v-model="form.customerName" placeholder="可留空" />
       </view>
+      <view class="item-card" v-for="(it, idx) in form.items" :key="idx">
+        <view class="item-head">
+          <text class="item-no">产品 {{ idx + 1 }}</text>
+          <text
+            class="item-del"
+            :class="{ 'item-del-off': form.items.length <= 1 }"
+            @click="removeItem(idx)"
+          >删除</text>
+        </view>
+        <view class="field">
+          <text class="field-label">产品名称</text>
+          <input class="field-input" v-model="it.productName" placeholder="可留空" />
+        </view>
+        <view class="field">
+          <text class="field-label">数量</text>
+          <input class="field-input" type="digit" v-model="it.qty" />
+          <text class="field-unit">件</text>
+        </view>
+        <view class="field">
+          <text class="field-label">采购成本（含税）</text>
+          <input class="field-input" type="digit" v-model="it.price" />
+          <text class="field-unit">¥/件</text>
+        </view>
+        <view class="field">
+          <text class="field-label">增值税率</text>
+          <input class="field-input" type="digit" v-model="it.vatRate" />
+          <text class="field-unit">%</text>
+        </view>
+        <view class="chips">
+          <text
+            v-for="v in VAT_RATES"
+            :key="v"
+            class="chip"
+            :class="{ 'chip-active': Number(it.vatRate) === v }"
+            @click="it.vatRate = v"
+          >{{ v }}%</text>
+        </view>
+        <view class="field">
+          <text class="field-label">出口退税率</text>
+          <input class="field-input" type="digit" v-model="it.rebateRate" />
+          <text class="field-unit">%</text>
+        </view>
+        <view class="chips">
+          <text
+            v-for="v in REBATE_RATES"
+            :key="v"
+            class="chip"
+            :class="{ 'chip-active': Number(it.rebateRate) === v }"
+            @click="it.rebateRate = v"
+          >{{ v }}%</text>
+        </view>
+      </view>
+      <view class="add-item" @click="addItem">+ 添加产品</view>
     </view>
 
     <view class="card">
-      <view class="card-title">成本与费率</view>
-      <view class="field">
-        <text class="field-label">采购成本（含税）</text>
-        <input class="field-input" type="digit" v-model="form.price" />
-        <text class="field-unit">¥/件</text>
-      </view>
-      <view class="field">
-        <text class="field-label">数量</text>
-        <input class="field-input" type="digit" v-model="form.qty" />
-        <text class="field-unit">件</text>
-      </view>
-      <view class="field">
-        <text class="field-label">增值税率</text>
-        <input class="field-input" type="digit" v-model="form.vatRate" />
-        <text class="field-unit">%</text>
-      </view>
-      <view class="chips">
-        <text
-          v-for="v in VAT_RATES"
-          :key="v"
-          class="chip"
-          :class="{ 'chip-active': isRateActive('vatRate', v) }"
-          @click="pickRate('vatRate', v)"
-        >{{ v }}%</text>
-      </view>
-      <view class="field">
-        <text class="field-label">出口退税率</text>
-        <input class="field-input" type="digit" v-model="form.rebateRate" />
-        <text class="field-unit">%</text>
-      </view>
-      <view class="chips">
-        <text
-          v-for="v in REBATE_RATES"
-          :key="v"
-          class="chip"
-          :class="{ 'chip-active': isRateActive('rebateRate', v) }"
-          @click="pickRate('rebateRate', v)"
-        >{{ v }}%</text>
-      </view>
+      <view class="card-title">国内费用</view>
       <view class="field">
         <text class="field-label">报关费</text>
         <input class="field-input" type="digit" v-model="form.feeCustoms" />
@@ -231,23 +243,47 @@
         <text class="result-value">{{ termLabelText }}</text>
       </view>
       <view class="result-line result-line-edit">
-        <text class="field-label">{{ result.tradeTerm }} 单价</text>
+        <text class="field-label">{{ result.tradeTerm }} {{ isMulti ? '整单总价' : '单价' }}</text>
         <view class="unit-edit">
           <input
             class="unit-input"
             :class="{ 'unit-input-on': manualActive, 'unit-low': view.belowCost }"
             type="digit"
-            :value="unitInputText"
-            @input="onUnitInput"
+            :value="priceInputText"
+            @input="onPriceInput"
           />
-          <text class="unit-unit">{{ symbol }} / 件</text>
+          <text class="unit-unit">{{ isMulti ? symbol : symbol + ' / 件' }}</text>
           <text v-if="manualActive" class="manual-tag">手动</text>
           <text v-if="manualActive" class="manual-restore" @click="restoreAutoPrice">恢复按成本计算</text>
         </view>
       </view>
       <view class="result-line">
-        <text class="field-label">{{ result.tradeTerm }} 总价</text>
+        <text class="field-label">整单总价</text>
         <text class="result-value result-main" :class="{ low: view.belowCost }">{{ symbol }} {{ fmt(view.totalPrice) }}</text>
+      </view>
+      <!-- 每行按货值占比分摊整单总价；最后一行兜底，保证明细合计 = 整单合计 -->
+      <view class="item-table">
+        <view class="item-row item-row-head">
+          <text class="it-no">#</text>
+          <text class="it-name">产品名称规格</text>
+          <text class="it-qty">数量</text>
+          <text class="it-price">单价</text>
+          <text class="it-amount">金额</text>
+        </view>
+        <view class="item-row" v-for="(row, i) in allocatedItems" :key="i">
+          <text class="it-no">{{ i + 1 }}</text>
+          <text class="it-name">{{ row.productName || '未命名产品' }}</text>
+          <text class="it-qty">{{ fmt(row.qty, 0) }}</text>
+          <text class="it-price">{{ fmt(row.unitPrice) }}</text>
+          <text class="it-amount">{{ fmt(row.totalPrice) }}</text>
+        </view>
+        <view class="item-row item-row-total" v-if="allocatedItems.length > 1">
+          <text class="it-no"></text>
+          <text class="it-name">合计</text>
+          <text class="it-qty">{{ fmt(totalQty, 0) }}</text>
+          <text class="it-price">—</text>
+          <text class="it-amount">{{ fmt(view.totalPrice) }}</text>
+        </view>
       </view>
       <view class="dash"></view>
       <view class="result-line">
@@ -383,6 +419,7 @@ import {
 import {
   calcTermQuote,
   calcManualTermQuote,
+  allocateItems,
   termsForMode,
   defaultTerm,
   remapTerm,
@@ -390,14 +427,22 @@ import {
   termLabel,
 } from '../../utils/incoterms.js'
 
+// 一行产品明细的默认值（首行与「+ 添加产品」共用；新增行产品名/单价留空）
+function makeItem(full = false) {
+  return {
+    productName: '',
+    qty: full ? 1000 : 1,
+    price: full ? 100 : 0,
+    vatRate: 13,
+    rebateRate: 13,
+  }
+}
+
 // 表单默认值（与 SPEC 一致）；贸易术语默认取当前运输方式的默认值（海运 FOB）
 const form = reactive({
-  productName: '',
   customerName: '',
-  price: 100,
-  qty: 1000,
-  vatRate: 13,
-  rebateRate: 13,
+  // 产品明细：一次报价可含多款（主产品 + 配件 + 包装），每行独立数量/含税采购价/税率
+  items: [makeItem(true)],
   // 国内费用 7 项明细（整票 ¥）；默认合计 2000（报关 500 + 拖车 800 + 港杂 500 + 单证 200），
   // 可选项（银行/仓储/其他）默认 0，避免无此支出时凭空多出成本
   feeCustoms: 500,
@@ -419,8 +464,24 @@ const form = reactive({
   destinationFee: 0,
   tariffRate: 5,
   importVatRate: 13,
-  manualUnitPrice: '', // 手动单价（空串 = 按成本计算）
+  // 手动定价输入：单行时为单价，多行时为整单总价（空串 = 按成本计算）
+  manualPrice: '',
 })
+
+// ---- 明细行增删：至少保留 1 行 ----
+function addItem() {
+  form.items.push(makeItem())
+}
+function removeItem(idx) {
+  if (form.items.length <= 1) {
+    uni.showToast({ title: '至少保留一个产品', icon: 'none' })
+    return
+  }
+  form.items.splice(idx, 1)
+}
+const isMulti = computed(() => form.items.length > 1)
+// 整单总数量 = Σ 各行数量（用于展示与导出）
+const totalQty = computed(() => form.items.reduce((sum, it) => sum + safeNumber(it.qty), 0))
 
 // ---- 国内费用：7 项明细累加为合计，再作为单一 domesticFee 送入计算 ----
 const FEE_KEYS = [
@@ -433,26 +494,30 @@ const FEE_KEYS = [
   'feeOther',
 ]
 const domesticFeeTotal = computed(() => FEE_KEYS.reduce((sum, k) => sum + safeNumber(form[k]), 0))
-// 计算输入：在原表单上补一个 domesticFee（7 项合计），公式与外部接口保持不变
-const calcInput = computed(() => ({ ...form, domesticFee: domesticFeeTotal.value }))
+// 计算输入：把明细与 domesticFee（7 项合计）送入计算，公式与外部接口保持不变
+const calcInput = computed(() => ({ ...form, items: form.items, domesticFee: domesticFeeTotal.value }))
 const result = computed(() => calcTermQuote(calcInput.value))
 
-// ---- 手动定价状态机：manualUnitPrice 非空即进入手动定价 ----
+// ---- 手动定价状态机：manualPrice 非空即进入手动定价 ----
 const manualActive = computed(
-  () => form.manualUnitPrice !== '' && form.manualUnitPrice !== null && form.manualUnitPrice !== undefined,
+  () => form.manualPrice !== '' && form.manualPrice !== null && form.manualPrice !== undefined,
 )
-// 手动模式的反算结果（成本加成率 / FOB 净收入口径的换汇成本、盈亏率）
-const manualResult = computed(() => calcManualTermQuote(calcInput.value, form.manualUnitPrice))
-// 单价输入框显示值：手动时显示输入原值，否则显示按成本算出的单价（2 位小数）
-const unitInputText = computed(() =>
-  manualActive.value ? String(form.manualUnitPrice) : safeNumber(result.value.unitPrice).toFixed(2),
+// 手动模式的反算结果；多行时手填值即整单总价（isTotal=true），单行时仍为单价
+const manualResult = computed(() =>
+  calcManualTermQuote(calcInput.value, form.manualPrice, isMulti.value),
 )
-function onUnitInput(e) {
-  form.manualUnitPrice = e.detail.value
+// 定价输入框显示值：手动时显示输入原值，否则显示按成本算出的值（2 位小数）
+const priceInputText = computed(() => {
+  if (manualActive.value) return String(form.manualPrice)
+  const auto = isMulti.value ? result.value.totalPrice : result.value.unitPrice
+  return safeNumber(auto).toFixed(2)
+})
+function onPriceInput(e) {
+  form.manualPrice = e.detail.value
 }
 // 点「恢复按成本计算」→ 清空手动价回到计算值
 function restoreAutoPrice() {
-  form.manualUnitPrice = ''
+  form.manualPrice = ''
 }
 
 // 结果区展示口径：手动定价时总价/保险费/换汇成本/盈亏率改用反算值，其余照旧
@@ -496,6 +561,11 @@ const view = computed(() => {
     shortfall: m.shortfall,
   }
 })
+
+// 每行分摊结果：按货值占比把整单总价（展示口径，含手动定价）分摊到各行
+const allocatedItems = computed(() => allocateItems(form.items, view.value.totalPrice))
+// 首行产品名（记录标题 / 导出扁平字段的兜底）
+const firstItemName = computed(() => (form.items[0] && form.items[0].productName) || '未命名产品')
 
 // 成本口径随术语变化：EXW 不含国内出口费用，其余术语含
 const costBaseLabel = computed(() =>
@@ -562,7 +632,7 @@ function onTransportChange(e) {
   // 术语按语义层级自动映射，非法则回退目标方式的默认术语
   const nextTerm = remapTerm(form.tradeTerm, prev, picked.code)
   // 术语变了 → 手动价口径不再适用，清空回到按成本计算
-  if (nextTerm !== form.tradeTerm) form.manualUnitPrice = ''
+  if (nextTerm !== form.tradeTerm) form.manualPrice = ''
   form.tradeTerm = nextTerm
 }
 
@@ -571,7 +641,7 @@ function onTermChange(e) {
   if (!picked || picked.code === form.tradeTerm) return
   form.tradeTerm = picked.code
   // 切换术语 → 清空手动价，避免口径错乱
-  form.manualUnitPrice = ''
+  form.manualPrice = ''
 }
 
 function isMultiActive(code) {
@@ -584,12 +654,9 @@ function toggleMulti(code) {
   else form.multimodal.splice(i, 1)
 }
 
-// ---- 表单记忆：只记稳定字段，产品名/客户名/汇率不记 ----
+// ---- 表单记忆：记忆客户名、国内费用明细、费率、手动价等稳定字段（明细行 items 单独处理）----
 const MEMO_KEYS = [
-  'price',
-  'qty',
-  'vatRate',
-  'rebateRate',
+  'customerName',
   'feeCustoms',
   'feeTrucking',
   'feePort',
@@ -608,7 +675,7 @@ const MEMO_KEYS = [
   'destinationFee',
   'tariffRate',
   'importVatRate',
-  'manualUnitPrice',
+  'manualPrice',
 ]
 
 watch(
@@ -618,10 +685,25 @@ watch(
     MEMO_KEYS.forEach((k) => {
       payload[k] = form[k]
     })
+    // 明细行整组记忆（含产品名与各行税率）
+    payload.items = form.items.map((it) => ({ ...it }))
     saveForm('quote', payload)
   },
   { deep: true },
 )
+
+// 明细行归一化：字段缺失/非法时回退默认值，保证任何来源（旧记忆/识别结果）都可安全使用
+function normalizeItem(src) {
+  const it = src || {}
+  const pick = (k, fallback) => (it[k] !== undefined && it[k] !== null ? it[k] : fallback)
+  return {
+    productName: it.productName !== undefined && it.productName !== null ? String(it.productName) : '',
+    qty: pick('qty', 1000),
+    price: pick('price', 100),
+    vatRate: pick('vatRate', 13),
+    rebateRate: pick('rebateRate', 13),
+  }
+}
 
 // 展示用格式化：金额 2 位、汇率/换汇成本 4 位，均带千分位
 function fmt(v, decimals = 2) {
@@ -705,7 +787,7 @@ function onCurrencyChange(e) {
   const picked = CURRENCIES[idx]
   if (!picked || picked.code === form.currency) return
   form.currency = picked.code
-  form.manualUnitPrice = '' // 切换币种 → 清空手动价，避免口径错乱
+  form.manualPrice = '' // 切换币种 → 清空手动价，避免口径错乱
   fx.manual = false
   fx.data = null
   fetchFx({ force: true })
@@ -731,9 +813,22 @@ const ocr = reactive({
   missing: [], // 未识别到的关键字段名
   notes: '', // 单据备注
   cartonSynced: false, // 箱规/毛重是否已写入装柜页记忆
+  multiCount: 0, // 识别到的产品行数（>1 时说明替换了当前明细）
 })
 
 const hasValue = (v) => v !== null && v !== undefined && v !== ''
+
+/** 识别结果单行 → 明细行（缺失税率回退 13%，与页面默认一致） */
+function ocrItem(it) {
+  const src = it || {}
+  return {
+    productName: hasValue(src.productName) ? String(src.productName) : '',
+    qty: hasValue(src.qty) ? src.qty : '',
+    price: hasValue(src.price) ? src.price : hasValue(src.unitPrice) ? src.unitPrice : '',
+    vatRate: hasValue(src.vatRate) ? src.vatRate : 13,
+    rebateRate: hasValue(src.rebateRate) ? src.rebateRate : 13,
+  }
+}
 
 /** 把识别结果按字段映射写入表单；null 跳过，不动用户其他已填内容 */
 function applyOcrFields(fields) {
@@ -741,42 +836,52 @@ function applyOcrFields(fields) {
   const missing = []
   let cartonSynced = false
 
-  // 产品名 / 客户名
-  if (hasValue(fields.productName)) {
-    form.productName = String(fields.productName)
-    filled.push('产品名')
-  } else missing.push('产品名')
+  // 多产品明细：识别到多行时整组替换当前明细（先清空再加行）
+  const ocrItems = Array.isArray(fields.items) ? fields.items : []
+  ocr.multiCount = ocrItems.length
+  if (ocrItems.length > 1) {
+    form.items = ocrItems.map(ocrItem)
+    form.manualPrice = '' // 明细变了 → 手动价口径不再适用
+    filled.push(`产品明细（${ocrItems.length} 项）`)
+  } else {
+    // 单行 / 无 items：行为同现在——只把识别到的字段填进当前第一行，其余不动
+    const single = ocrItems.length === 1 ? ocrItems[0] : {}
+    const pick = (k) => (hasValue(fields[k]) ? fields[k] : single[k])
+    const first = form.items[0] || (form.items[0] = makeItem(true))
+    if (hasValue(pick('productName'))) {
+      first.productName = String(pick('productName'))
+      filled.push('产品名')
+    } else missing.push('产品名')
+    if (hasValue(pick('qty'))) {
+      first.qty = pick('qty')
+      filled.push('数量')
+    } else missing.push('数量')
+    if (hasValue(pick('price'))) {
+      first.price = pick('price')
+      filled.push('单价')
+    } else missing.push('单价')
+    if (hasValue(pick('vatRate'))) {
+      first.vatRate = pick('vatRate')
+      filled.push('增值税率')
+    } else missing.push('增值税率')
+    if (hasValue(pick('rebateRate'))) {
+      first.rebateRate = pick('rebateRate')
+      filled.push('退税率')
+    } else missing.push('退税率')
+  }
+
+  // 客户名
   if (hasValue(fields.customerName)) {
     form.customerName = String(fields.customerName)
     filled.push('客户名')
   } else missing.push('客户名')
-
-  // 数量 / 单价（采购成本含税）
-  if (hasValue(fields.qty)) {
-    form.qty = fields.qty
-    filled.push('数量')
-  } else missing.push('数量')
-  if (hasValue(fields.price)) {
-    form.price = fields.price
-    filled.push('单价')
-  } else missing.push('单价')
-
-  // 税率
-  if (hasValue(fields.vatRate)) {
-    form.vatRate = fields.vatRate
-    filled.push('增值税率')
-  } else missing.push('增值税率')
-  if (hasValue(fields.rebateRate)) {
-    form.rebateRate = fields.rebateRate
-    filled.push('退税率')
-  } else missing.push('退税率')
 
   // 币种：仅当在 CURRENCIES 表内才采纳，并重拉该币种实时汇率
   if (hasValue(fields.currency)) {
     const code = String(fields.currency).toUpperCase()
     if (CURRENCIES.some((c) => c.code === code)) {
       form.currency = code
-      form.manualUnitPrice = '' // 换币种 → 清空手动价，避免口径错乱
+      form.manualPrice = '' // 换币种 → 清空手动价，避免口径错乱
       fx.manual = false
       fx.data = null
       fetchFx({ force: true })
@@ -815,6 +920,7 @@ async function onOcr() {
   ocr.missing = []
   ocr.notes = ''
   ocr.cartonSynced = false
+  ocr.multiCount = 0
 
   let dataUrl
   try {
@@ -841,19 +947,25 @@ async function onOcr() {
 const VAT_RATES = [13, 9, 6]
 const REBATE_RATES = [13, 10, 9, 6, 0]
 
-function pickRate(field, v) {
-  form[field] = v
-}
-function isRateActive(field, v) {
-  return Number(form[field]) === v
-}
-
 onMounted(() => {
   const saved = loadForm('quote')
   if (saved) {
     MEMO_KEYS.forEach((k) => {
       if (saved[k] !== undefined && saved[k] !== null) form[k] = saved[k]
     })
+    // 明细记忆：新结构为 items[]；旧记忆只有扁平的 productName/qty/price/vatRate/rebateRate → 迁移成 1 行
+    if (Array.isArray(saved.items) && saved.items.length) {
+      form.items = saved.items.map(normalizeItem)
+    } else if (
+      saved.productName !== undefined || saved.qty !== undefined || saved.price !== undefined ||
+      saved.vatRate !== undefined || saved.rebateRate !== undefined
+    ) {
+      form.items = [normalizeItem(saved)]
+    }
+    // 旧记忆的手动价字段名是 manualUnitPrice（语义同为「输入框数值」）
+    if (saved.manualPrice === undefined && saved.manualUnitPrice !== undefined) {
+      form.manualPrice = saved.manualUnitPrice
+    }
     // 兼容旧记忆：旧结构把国内费用打包成 domesticFee（报关/拖车/单证/银行，本就不含仓储费），
     // 仓储费另存 warehouseFee。新的 7 项明细都不存在时按此迁移，保证默认合计与旧总成本一致。
     const hasNewFees = FEE_KEYS.some((k) => saved[k] !== undefined && saved[k] !== null)
@@ -883,9 +995,11 @@ onMounted(() => {
     form.tradeTerm = defaultTerm(form.transportMode)
   }
   // 记忆里的手动价若无法解析为有限数，视为无效，回退按成本计算
-  if (form.manualUnitPrice !== '' && !Number.isFinite(Number(form.manualUnitPrice))) {
-    form.manualUnitPrice = ''
+  if (form.manualPrice !== '' && !Number.isFinite(Number(form.manualPrice))) {
+    form.manualPrice = ''
   }
+  // 明细至少保留 1 行，避免空数组导致整单货值为 0 后界面无行可编辑
+  if (!Array.isArray(form.items) || !form.items.length) form.items = [makeItem(true)]
   fetchFx()
 })
 
@@ -900,7 +1014,9 @@ function onSave() {
   const v = view.value
   const record = {
     id: makeId(),
-    productName: form.productName || '未命名产品',
+    productName: firstItemName.value,
+    // 单行/多行明细（含分摊后的行单价与行金额），历史页据此展示「第一款名 等 N 项」
+    items: allocatedItems.value,
     customerName: form.customerName || '',
     currency: form.currency,
     transportMode: form.transportMode,
@@ -909,7 +1025,7 @@ function onSave() {
     unitPrice: v.unitPrice,
     totalPrice: v.totalPrice,
     createdAt: Date.now(),
-    input: { ...form },
+    input: { ...form, items: form.items.map((it) => ({ ...it })) },
     // 手动定价时，展示口径的金额/费用/换汇成本/盈亏率一并按手动口径存档
     result: {
       ...r,
@@ -936,25 +1052,39 @@ function onCopyQuote() {
   const r = result.value
   const v = view.value
   const code = form.currency
-  const productName = form.productName || '未命名产品'
+  const productName = firstItemName.value
   const customerName = form.customerName || '未填写客户'
   const transportText = isMultimodal.value
     ? `${MULTIMODAL.name}（${multiText.value || '未选择组合'}）`
     : transportLabel.value
   // 外贸单据统一用币种代码，避免 ¥ / $ 符号歧义；只报所选术语
+  const title = isMulti.value ? `${productName} 等 ${form.items.length} 项` : productName
   const lines = [
-    `【报价单】${productName} - ${customerName}`,
+    `【报价单】${title} - ${customerName}`,
     `币种：${code}`,
     `运输方式：${transportText}`,
     `贸易方式：${termLabelText.value}`,
-    `${r.tradeTerm}：${code} ${fmt(v.unitPrice)}/件（总价 ${code} ${fmt(v.totalPrice)}）`,
   ]
-  // 手动定价时补一行说明，标明手填单价及其成本加成率
+  if (isMulti.value) {
+    // 多产品：逐行列明细，最后给整单总价
+    lines.push('明细：')
+    allocatedItems.value.forEach((row, i) => {
+      lines.push(`  ${i + 1}. ${row.productName || '未命名产品'} ${fmt(row.qty, 0)} 件 × ${code} ${fmt(row.unitPrice)} = ${code} ${fmt(row.totalPrice)}`)
+    })
+    lines.push(`${r.tradeTerm} 整单总价：${code} ${fmt(v.totalPrice)}`)
+  } else {
+    lines.push(`${r.tradeTerm}：${code} ${fmt(v.unitPrice)}/件（总价 ${code} ${fmt(v.totalPrice)}）`)
+  }
+  // 手动定价时补一行说明
   if (manualActive.value) {
-    lines.push(`定价方式：手动定价（成本加成率 ${fmt(v.markupPct, 2)}%）`)
+    lines.push(
+      isMulti.value
+        ? `定价方式：手动定价（整单总价，成本加成率 ${fmt(v.markupPct, 2)}%）`
+        : `定价方式：手动定价（成本加成率 ${fmt(v.markupPct, 2)}%）`,
+    )
   }
   lines.push(
-    `数量：${fmt(r.qty, 0)} 件 | 汇率：1 ${code} = ${rateText.value} ¥ | 盈亏率：${fmt(v.profitPct, 2)}%`,
+    `数量：${fmt(totalQty.value, 0)} 件 | 汇率：1 ${code} = ${rateText.value} ¥ | 盈亏率：${fmt(v.profitPct, 2)}%`,
     '有效期：30 天',
   )
   const text = lines.join('\n')
@@ -1003,9 +1133,16 @@ function buildExportPayload(format) {
   const v = view.value
   return {
     quote: {
-      productName: form.productName || '未命名产品',
+      // 多行明细（分摊后的行单价/行金额）；同时保留扁平字段（取第一行）向后兼容
+      items: allocatedItems.value.map((row) => ({
+        productName: row.productName || '未命名产品',
+        qty: row.qty,
+        unitPrice: row.unitPrice,
+        totalPrice: row.totalPrice,
+      })),
+      productName: firstItemName.value,
       customerName: form.customerName || '',
-      qty: safeNumber(form.qty),
+      qty: totalQty.value,
       unitPrice: v.unitPrice,
       totalPrice: v.totalPrice,
       currency: form.currency,
@@ -1267,6 +1404,98 @@ picker .field {
   line-height: 1.5;
   color: #9ca3af;
   padding-top: 8rpx;
+}
+
+/* ---- 产品明细：每行一张小卡 ---- */
+.item-card {
+  margin-top: 16rpx;
+  padding: 16rpx 16rpx 8rpx;
+  background: #f9fafb;
+  border: 1rpx solid #eef0f3;
+  border-radius: 12rpx;
+}
+.item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 4rpx;
+}
+.item-no {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #2563eb;
+}
+.item-del {
+  font-size: 24rpx;
+  color: #dc2626;
+  padding: 4rpx 12rpx;
+}
+/* 只剩 1 行时不可删：置灰但仍可点击（点击给提示） */
+.item-del-off {
+  color: #cbd5e1;
+}
+.add-item {
+  margin-top: 16rpx;
+  text-align: center;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1rpx dashed #bfdbfe;
+  border-radius: 12rpx;
+  padding: 20rpx 0;
+}
+
+/* ---- 结果区明细表（# / 产品名 / 数量 / 单价 / 金额） ---- */
+.item-table {
+  margin-top: 12rpx;
+  border-top: 1rpx solid #f0f1f3;
+}
+.item-row {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid #f0f1f3;
+  font-size: 26rpx;
+  color: #111827;
+}
+.item-row-head {
+  font-size: 22rpx;
+  color: #9ca3af;
+  border-bottom-color: #e5e7eb;
+}
+.item-row-total {
+  font-weight: 600;
+  border-bottom: none;
+}
+.it-no {
+  width: 44rpx;
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+.it-name {
+  flex: 1;
+  min-width: 0;
+  padding-right: 12rpx;
+  /* 超长产品名省略号截断 */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.it-qty {
+  width: 120rpx;
+  flex-shrink: 0;
+  text-align: right;
+}
+.it-price {
+  width: 140rpx;
+  flex-shrink: 0;
+  text-align: right;
+}
+.it-amount {
+  width: 180rpx;
+  flex-shrink: 0;
+  text-align: right;
 }
 
 /* 常用税率 chips */
