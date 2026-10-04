@@ -1,7 +1,7 @@
 /**
  * transport.js — 运输方式表与展示辅助
  * 纯数据 + 纯函数，无 uni / DOM 依赖。
- * 海运类（含内河）用 FOB/CFR/CIF，其余按 Incoterms 用 FCA/CPT/CIP（计算口径相同）。
+ * 贸易术语表与计算口径见 incoterms.js（海运类可选全部 11 种，其余 7 种）。
  */
 
 export const TRANSPORT_MODES = [
@@ -48,16 +48,9 @@ export function getMode(code) {
   return MODE_OPTIONS.find((m) => m.code === c) || TRANSPORT_MODES[0]
 }
 
-/** 是否属于海运类：决定用 FOB/CFR/CIF 还是 FCA/CPT/CIP */
+/** 是否属于海运类：决定可选术语集合与默认术语（见 incoterms.js） */
 export function isSeaMode(code) {
   return SEA_CODES.indexOf(String(code || '').toUpperCase()) !== -1
-}
-
-/** 贸易术语名称：海运类 → FOB/CFR/CIF；其他 → FCA/CPT/CIP */
-export function termNames(code) {
-  return isSeaMode(code)
-    ? { base: 'FOB', freight: 'CFR', insured: 'CIF' }
-    : { base: 'FCA', freight: 'CPT', insured: 'CIP' }
 }
 
 /** 运费输入框标签，随运输方式变化 */

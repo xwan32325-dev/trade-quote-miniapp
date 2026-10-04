@@ -1,4 +1,4 @@
-<!-- 报价计算页：录入运输方式、成本与费用，实时算出 FOB/CFR/CIF（非海运为 FCA/CPT/CIP）与换汇成本、盈亏率 -->
+<!-- 报价计算页：录入运输方式、贸易术语、成本与费用，实时算出所选术语的单价/总价与换汇成本、盈亏率 -->
 <template>
   <view class="page">
     <view class="card">
@@ -111,6 +111,14 @@
           <text class="field-picker">{{ transportLabel }} ›</text>
         </view>
       </picker>
+      <picker mode="selector" :range="termRange" :value="termIndex" @change="onTermChange">
+        <view class="field">
+          <text class="field-label">贸易术语</text>
+          <text class="field-picker">{{ termLabelText }} ›</text>
+        </view>
+      </picker>
+      <view class="term-note">FAS/FOB/FCA 共用同一基准价；如需体现装船费差异，请在国内费用里自行增减</view>
+      <view class="term-note" v-if="form.tradeTerm === 'DPU'">DPU 的卸货费含在「目的地费用」里</view>
       <template v-if="isMultimodal">
         <view class="multi-hint">从下列 11 种方式中勾选实际组合（至少 2 种）</view>
         <view class="chips">
@@ -130,63 +138,78 @@
     <view class="card">
       <view class="card-title">{{ isSeaMode(form.transportMode) ? '海运与保险' : '运费与保险' }}</view>
       <view class="field">
-        <text class="field-label">{{ freightLabelText }}</text>
+        <text class="field-label">{{ freightLabelText }}<text v-if="!counts.freight" class="label-note">（本术语不计入）</text></text>
         <input class="field-input" type="digit" v-model="form.freight" />
         <text class="field-unit">{{ symbol }}</text>
       </view>
       <view class="field">
-        <text class="field-label">保险费率</text>
+        <text class="field-label">保险费率<text v-if="!counts.insurance" class="label-note">（本术语不计入）</text></text>
         <input class="field-input" type="digit" v-model="form.insuranceRate" />
         <text class="field-unit">%</text>
       </view>
       <view class="field">
-        <text class="field-label">投保加成率</text>
+        <text class="field-label">投保加成率<text v-if="!counts.insurance" class="label-note">（本术语不计入）</text></text>
         <input class="field-input" type="digit" v-model="form.markupRate" />
         <text class="field-unit">%</text>
       </view>
-      <view class="term-tip" v-if="!isSea">⚠️ 空运/铁路等非海运方式按 Incoterms 用 FCA/CPT/CIP；本页计算口径相同（运费、保险照常计入）</view>
+      <view class="field">
+        <text class="field-label">目的地费用（整票）<text v-if="!counts.destination" class="label-note">（本术语不计入）</text></text>
+        <input class="field-input" type="digit" v-model="form.destinationFee" />
+        <text class="field-unit">{{ symbol }}</text>
+      </view>
+      <view class="field">
+        <text class="field-label">进口关税税率<text v-if="!counts.duty" class="label-note">（本术语不计入）</text></text>
+        <input class="field-input" type="digit" v-model="form.tariffRate" />
+        <text class="field-unit">%</text>
+      </view>
+      <view class="field">
+        <text class="field-label">目的国增值税率<text v-if="!counts.duty" class="label-note">（本术语不计入）</text></text>
+        <input class="field-input" type="digit" v-model="form.importVatRate" />
+        <text class="field-unit">%</text>
+      </view>
     </view>
 
     <view class="card">
       <view class="card-title">报价结果</view>
       <view class="result-line">
-        <text class="field-label">{{ terms.base }} 单价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.fobUnit) }} / 件</text>
+        <text class="field-label">贸易术语</text>
+        <text class="result-value">{{ termLabelText }}</text>
       </view>
       <view class="result-line">
-        <text class="field-label">{{ terms.base }} 总价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.fobTotal) }}</text>
+        <text class="field-label">{{ result.tradeTerm }} 单价</text>
+        <text class="result-value result-main">{{ symbol }} {{ fmt(result.unitPrice) }} / 件</text>
       </view>
       <view class="result-line">
-        <text class="field-label">{{ terms.freight }} 单价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(div(result.cfrTotal, result.qty)) }} / 件</text>
+        <text class="field-label">{{ result.tradeTerm }} 总价</text>
+        <text class="result-value result-main">{{ symbol }} {{ fmt(result.totalPrice) }}</text>
       </view>
+      <view class="dash"></view>
       <view class="result-line">
-        <text class="field-label">{{ terms.freight }} 总价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.cfrTotal) }}</text>
+        <text class="field-label">货值成本</text>
+        <text class="result-value">¥ {{ fmt(result.costBase) }}</text>
       </view>
-      <view class="result-line">
-        <text class="field-label">{{ terms.insured }} 单价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(div(result.cifTotal, result.qty)) }} / 件</text>
+      <view class="result-line" v-if="result.includesFreight">
+        <text class="field-label">运费</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.freight) }}</text>
       </view>
-      <view class="result-line">
-        <text class="field-label">{{ terms.insured }} 总价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.cifTotal) }}</text>
-      </view>
-      <view class="result-line">
+      <view class="result-line" v-if="result.includesInsurance">
         <text class="field-label">保险费</text>
         <text class="result-value">{{ symbol }} {{ fmt(result.insurance) }}</text>
       </view>
-      <view class="result-line">
-        <text class="field-label">退税额合计</text>
-        <text class="result-value">¥ {{ fmt(result.refundTotal) }}</text>
+      <view class="result-line" v-if="result.includesDestination">
+        <text class="field-label">目的地费用</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.destinationFee) }}</text>
+      </view>
+      <view class="result-line" v-if="result.includesDuty">
+        <text class="field-label">进口关税</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.tariff) }}</text>
+      </view>
+      <view class="result-line" v-if="result.includesDuty">
+        <text class="field-label">进口增值税</text>
+        <text class="result-value">{{ symbol }} {{ fmt(result.importVat) }}</text>
       </view>
       <view class="result-line">
-        <text class="field-label">出口总成本</text>
-        <text class="result-value">¥ {{ fmt(result.totalCost) }}</text>
-      </view>
-      <view class="result-line">
-        <text class="field-label">换汇成本（汇率 {{ rateText }}）</text>
+        <text class="field-label">换汇成本（按 FOB 口径）</text>
         <text class="result-value" :class="result.isProfit ? 'profit' : result.isLoss ? 'loss' : ''">
           {{ fmt(result.exchangeCost, rateDecimals(result.exchangeCost)) }}
           <text v-if="result.isProfit"> 盈利</text>
@@ -199,6 +222,7 @@
           {{ fmt(result.profitPct, 2) }}%
         </text>
       </view>
+      <view class="result-note" v-if="uncountedText">未计入本术语：{{ uncountedText }}</view>
     </view>
 
     <view class="card">
@@ -212,7 +236,7 @@
 
 <script setup>
 import { reactive, computed, onMounted, watch } from 'vue'
-import { calcQuote, formatNumber, safeNumber } from '../../utils/calc.js'
+import { formatNumber } from '../../utils/calc.js'
 import { saveRecord, makeId, saveForm, loadForm } from '../../utils/storage.js'
 import { getFxRate } from '../../utils/request.js'
 import { CURRENCIES, getCurrency, rateDecimals } from '../../utils/currency.js'
@@ -222,12 +246,19 @@ import {
   MULTIMODAL,
   getMode,
   isSeaMode,
-  termNames,
   freightLabel,
   modeShortName,
 } from '../../utils/transport.js'
+import {
+  calcTermQuote,
+  termsForMode,
+  defaultTerm,
+  remapTerm,
+  isValidTerm,
+  termLabel,
+} from '../../utils/incoterms.js'
 
-// 表单默认值（与 SPEC 一致）
+// 表单默认值（与 SPEC 一致）；贸易术语默认取当前运输方式的默认值（海运 FOB）
 const form = reactive({
   productName: '',
   customerName: '',
@@ -240,13 +271,17 @@ const form = reactive({
   exchangeRate: 7.1,
   profitRate: 10,
   transportMode: TRANSPORT_MODES[0].code,
+  tradeTerm: defaultTerm(TRANSPORT_MODES[0].code),
   multimodal: [],
   freight: 500,
   insuranceRate: 0.3,
   markupRate: 10,
+  destinationFee: 800,
+  tariffRate: 5,
+  importVatRate: 13,
 })
 
-const result = computed(() => calcQuote(form))
+const result = computed(() => calcTermQuote(form))
 
 // ---- 结算币种：picker 选项与当前项 ----
 const currencyRange = CURRENCIES.map((c) => `${c.name}（${c.code}）`)
@@ -269,16 +304,47 @@ const transportIndex = computed(() => {
 })
 const transportLabel = computed(() => getMode(form.transportMode).name)
 const isMultimodal = computed(() => form.transportMode === MULTIMODAL.code)
-const isSea = computed(() => isSeaMode(form.transportMode))
-// 贸易术语随运输方式切换：海运类 FOB/CFR/CIF，其余 FCA/CPT/CIP
-const terms = computed(() => termNames(form.transportMode))
+// 贸易术语：按当前运输方式过滤（海运 11 种，其余 7 种），默认海运 FOB / 其余 FCA
+const termRange = computed(() => termsForMode(form.transportMode).map((t) => `${t.code}（${t.zh}）`))
+const termIndex = computed(() => {
+  const i = termsForMode(form.transportMode).findIndex((t) => t.code === form.tradeTerm)
+  return i === -1 ? 0 : i
+})
+const termLabelText = computed(() => termLabel(form.tradeTerm))
 const freightLabelText = computed(() => freightLabel(form.transportMode))
 // 多式联运已选组合（简称拼接，如「海运整柜 + 铁路运输」）
 const multiText = computed(() => form.multimodal.map(modeShortName).join(' + '))
 
+// 各费用项是否计入当前术语（决定输入标签的「本术语不计入」小字与结果明细）
+const counts = computed(() => ({
+  freight: result.value.includesFreight,
+  insurance: result.value.includesInsurance,
+  destination: result.value.includesDestination,
+  duty: result.value.includesDuty,
+}))
+// 结果区灰色提示：本术语未计入的费用项（避免用户以为填了没用）
+const uncountedText = computed(() => {
+  const c = counts.value
+  const names = []
+  if (!c.freight) names.push('运费')
+  if (!c.insurance) names.push('保险费')
+  if (!c.destination) names.push('目的地费用')
+  if (!c.duty) names.push('进口关税、进口增值税')
+  return names.join('、')
+})
+
 function onTransportChange(e) {
   const picked = MODE_OPTIONS[Number(e.detail.value)]
-  if (picked) form.transportMode = picked.code
+  if (!picked) return
+  const prev = form.transportMode
+  form.transportMode = picked.code
+  // 术语按语义层级自动映射，非法则回退目标方式的默认术语
+  form.tradeTerm = remapTerm(form.tradeTerm, prev, picked.code)
+}
+
+function onTermChange(e) {
+  const picked = termsForMode(form.transportMode)[Number(e.detail.value)]
+  if (picked) form.tradeTerm = picked.code
 }
 
 function isMultiActive(code) {
@@ -301,10 +367,14 @@ const MEMO_KEYS = [
   'currency',
   'profitRate',
   'transportMode',
+  'tradeTerm',
   'multimodal',
   'freight',
   'insuranceRate',
   'markupRate',
+  'destinationFee',
+  'tariffRate',
+  'importVatRate',
 ]
 
 watch(
@@ -322,14 +392,6 @@ watch(
 // 展示用格式化：金额 2 位、汇率/换汇成本 4 位，均带千分位
 function fmt(v, decimals = 2) {
   return formatNumber(v, decimals)
-}
-
-// CFR / CIF 单价由总价除以数量得出；数量为 0 时返回 0
-function div(a, b) {
-  const n = safeNumber(b)
-  if (!n) return 0
-  const r = safeNumber(a) / n
-  return Number.isFinite(r) ? r : 0
 }
 
 // ---- 实时汇率：进入页面自动获取，手动可覆盖 ----
@@ -452,6 +514,10 @@ onMounted(() => {
       ? form.multimodal.filter((c) => TRANSPORT_MODES.some((m) => m.code === c))
       : []
   }
+  // 术语必须与当前运输方式匹配（旧记忆或跨方式残留），否则回退该方式默认
+  if (!isValidTerm(form.tradeTerm, form.transportMode)) {
+    form.tradeTerm = defaultTerm(form.transportMode)
+  }
   fetchFx()
 })
 
@@ -470,9 +536,9 @@ function onSave() {
     currency: form.currency,
     transportMode: form.transportMode,
     multimodal: isMultimodal.value ? [...form.multimodal] : [],
-    term: terms.value.base,
-    unitPrice: r.fobUnit,
-    totalPrice: r.fobTotal,
+    tradeTerm: r.tradeTerm,
+    unitPrice: r.unitPrice,
+    totalPrice: r.totalPrice,
     createdAt: Date.now(),
     input: { ...form },
     result: { ...r },
@@ -490,20 +556,18 @@ function onCopyQuote() {
 
   const r = result.value
   const code = form.currency
-  const t = terms.value
   const productName = form.productName || '未命名产品'
   const customerName = form.customerName || '未填写客户'
   const transportText = isMultimodal.value
     ? `${MULTIMODAL.name}（${multiText.value || '未选择组合'}）`
     : transportLabel.value
-  // 外贸单据统一用币种代码，避免 ¥ / $ 符号歧义
+  // 外贸单据统一用币种代码，避免 ¥ / $ 符号歧义；只报所选术语
   const text = [
     `【报价单】${productName} - ${customerName}`,
     `币种：${code}`,
     `运输方式：${transportText}`,
-    `${t.base} 上海：${code} ${fmt(r.fobUnit)}/件（总价 ${code} ${fmt(r.fobTotal)}）`,
-    `${t.freight}：${code} ${fmt(div(r.cfrTotal, r.qty))}/件（总价 ${code} ${fmt(r.cfrTotal)}）`,
-    `${t.insured}：${code} ${fmt(div(r.cifTotal, r.qty))}/件（总价 ${code} ${fmt(r.cifTotal)}）`,
+    `贸易术语：${termLabelText.value}`,
+    `${r.tradeTerm}：${code} ${fmt(r.unitPrice)}/件（总价 ${code} ${fmt(r.totalPrice)}）`,
     `数量：${fmt(r.qty, 0)} 件 | 汇率：1 ${code} = ${rateText.value} ¥ | 盈亏率：${fmt(r.profitPct, 2)}%`,
     '有效期：30 天',
   ].join('\n')
@@ -564,12 +628,35 @@ picker .field {
   padding-bottom: 8rpx;
 }
 
-/* 非海运方式的 Incoterms 小字提示 */
-.term-tip {
+/* 贸易术语小字说明（FAS/FOB/FCA 共用基准、DPU 卸货费） */
+.term-note {
   font-size: 22rpx;
   line-height: 1.5;
-  color: #d97706;
+  color: #9ca3af;
   padding-top: 8rpx;
+}
+/* 输入标签后的灰色「本术语不计入」 */
+.label-note {
+  font-size: 22rpx;
+  color: #9ca3af;
+}
+
+/* 结果区：术语单价/总价大一号加粗 */
+.result-main {
+  font-size: 34rpx;
+  color: #111827;
+}
+/* 结果区细分隔线 */
+.dash {
+  border-top: 1rpx dashed #e5e7eb;
+  margin: 8rpx 0;
+}
+/* 结果区灰色「未计入」提示 */
+.result-note {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #9ca3af;
+  padding-top: 12rpx;
 }
 
 /* 汇率状态栏：紧贴汇率输入框的小字提示 */

@@ -21,38 +21,50 @@
         <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
         <view class="muted">运输方式：{{ transportText(item) }}</view>
         <view class="record-summary">
-          <text>{{ codeOf(item) }} 单价 {{ fmt(item.unitPrice) }}</text>
+          <text>{{ termOf(item) }} 单价 {{ codeOf(item) }} {{ fmt(item.unitPrice) }}</text>
           <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
         </view>
       </view>
 
       <view class="detail" v-if="expandedId === item.id">
         <view class="result-line">
-          <text class="field-label">退税额合计</text>
-          <text class="result-value">¥ {{ fmt(item.result.refundTotal) }}</text>
+          <text class="field-label">贸易术语</text>
+          <text class="result-value">{{ termLabel(termOf(item)) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">出口总成本</text>
-          <text class="result-value">¥ {{ fmt(item.result.totalCost) }}</text>
+          <text class="field-label">{{ termOf(item) }} 单价</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.unitPrice) }} / 件</text>
         </view>
         <view class="result-line">
-          <text class="field-label">{{ termsOf(item).base }} 总价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.fobTotal) }}</text>
+          <text class="field-label">{{ termOf(item) }} 总价</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">{{ termsOf(item).freight }} 总价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cfrTotal) }}</text>
+          <text class="field-label">货值成本</text>
+          <text class="result-value">¥ {{ fmt(costBaseOf(item)) }}</text>
         </view>
-        <view class="result-line">
-          <text class="field-label">{{ termsOf(item).insured }} 总价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cifTotal) }}</text>
+        <view class="result-line" v-if="includesOf(item).carriage">
+          <text class="field-label">运费</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.freight) }}</text>
         </view>
-        <view class="result-line">
+        <view class="result-line" v-if="includesOf(item).insurance">
           <text class="field-label">保险费</text>
           <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.insurance) }}</text>
         </view>
+        <view class="result-line" v-if="includesOf(item).destination">
+          <text class="field-label">目的地费用</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.destinationFee) }}</text>
+        </view>
+        <view class="result-line" v-if="includesOf(item).duty">
+          <text class="field-label">进口关税</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.tariff) }}</text>
+        </view>
+        <view class="result-line" v-if="includesOf(item).duty">
+          <text class="field-label">进口增值税</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.importVat) }}</text>
+        </view>
         <view class="result-line">
-          <text class="field-label">换汇成本</text>
+          <text class="field-label">换汇成本（按 FOB 口径）</text>
           <text class="result-value">{{ fmt(item.result.exchangeCost, 4) }}</text>
         </view>
         <view class="result-line">
@@ -76,7 +88,8 @@ import { onShow } from '@dcloudio/uni-app'
 import { getHistory, removeRecord, clearHistory } from '../../utils/storage.js'
 import { formatNumber } from '../../utils/calc.js'
 import { getCurrency } from '../../utils/currency.js'
-import { MULTIMODAL, modeShortName, termNames } from '../../utils/transport.js'
+import { MULTIMODAL, modeShortName } from '../../utils/transport.js'
+import { termLabel, termIncludes } from '../../utils/incoterms.js'
 
 const list = ref([])
 const expandedId = ref('')
@@ -107,9 +120,20 @@ function transportText(item) {
   return modeShortName(code)
 }
 
-// 贸易术语随运输方式切换：海运类 FOB/CFR/CIF，其余 FCA/CPT/CIP（旧记录按海运兜底）
-function termsOf(item) {
-  return termNames((item && item.transportMode) || 'SEA_FCL')
+// 贸易术语：优先 tradeTerm，旧记录按原 term 字段兜底，再兜底 FOB
+function termOf(item) {
+  return (item && (item.tradeTerm || item.term)) || 'FOB'
+}
+
+// 该记录术语计入哪些费用项（旧记录无 includes 字段时按术语表推导）
+function includesOf(item) {
+  return termIncludes(termOf(item))
+}
+
+// 货值成本：新记录有 costBase；旧记录没有则退回 totalCost（含国内成本）
+function costBaseOf(item) {
+  const r = (item && item.result) || {}
+  return r.costBase !== undefined ? r.costBase : r.totalCost
 }
 
 function formatTime(ts) {
