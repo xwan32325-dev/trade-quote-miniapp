@@ -92,6 +92,10 @@
           <text class="fx-action" @click="fetchFx({ force: true })">刷新</text>
         </template>
       </view>
+      <!-- 部分小币种（如卢布）公开汇率源精度有限，必须明说，避免拿去做正式报价 -->
+      <view class="fx-bar" v-if="fxStatus === 'success' && fx.data && fx.data.lowPrecision">
+        <text class="fx-text fx-warn">⚠️ 该币种公开汇率源精度有限（仅 {{ fx.data.significantDigits }} 位有效数字），正式报价请以银行牌价为准</text>
+      </view>
       <view class="field">
         <text class="field-label">预期利润率</text>
         <input class="field-input" type="digit" v-model="form.profitRate" />

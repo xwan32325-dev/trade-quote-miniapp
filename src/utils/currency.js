@@ -6,7 +6,7 @@
 export const CURRENCIES = [
   { code: 'USD', symbol: '$', name: '美元' },
   { code: 'EUR', symbol: '€', name: '欧元' },
-  { code: 'JPY', symbol: '¥', name: '日元' },
+  { code: 'JPY', symbol: 'JP¥', name: '日元' }, // 用 JP¥ 避免和人民币 ¥ 混淆
   { code: 'GBP', symbol: '£', name: '英镑' },
   { code: 'AUD', symbol: 'A$', name: '澳元' },
   { code: 'HKD', symbol: 'HK$', name: '港币' },
