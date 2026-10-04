@@ -168,7 +168,7 @@
       </picker>
       <picker mode="selector" :range="termRange" :value="termIndex" @change="onTermChange">
         <view class="field">
-          <text class="field-label">贸易术语</text>
+          <text class="field-label">贸易方式</text>
           <text class="field-picker">{{ termLabelText }} ›</text>
         </view>
       </picker>
@@ -193,32 +193,32 @@
     <view class="card">
       <view class="card-title">{{ isSeaMode(form.transportMode) ? '海运与保险' : '运费与保险' }}</view>
       <view class="field">
-        <text class="field-label">{{ freightLabelText }}<text v-if="!counts.freight" class="label-note">（本术语不计入）</text></text>
+        <text class="field-label">{{ freightLabelText }}</text>
         <input class="field-input" type="digit" v-model="form.freight" />
         <text class="field-unit">{{ symbol }}</text>
       </view>
       <view class="field">
-        <text class="field-label">保险费率<text v-if="!counts.insurance" class="label-note">（本术语不计入）</text></text>
+        <text class="field-label">保险费率</text>
         <input class="field-input" type="digit" v-model="form.insuranceRate" />
         <text class="field-unit">%</text>
       </view>
       <view class="field">
-        <text class="field-label">投保加成率<text v-if="!counts.insurance" class="label-note">（本术语不计入）</text></text>
+        <text class="field-label">投保加成率</text>
         <input class="field-input" type="digit" v-model="form.markupRate" />
         <text class="field-unit">%</text>
       </view>
       <view class="field">
-        <text class="field-label">目的地费用（整票）<text v-if="!counts.destination" class="label-note">（本术语不计入）</text></text>
+        <text class="field-label">目的地费用（整票）</text>
         <input class="field-input" type="digit" v-model="form.destinationFee" />
         <text class="field-unit">{{ symbol }}</text>
       </view>
       <view class="field">
-        <text class="field-label">进口关税税率<text v-if="!counts.duty" class="label-note">（本术语不计入）</text></text>
+        <text class="field-label">进口关税税率</text>
         <input class="field-input" type="digit" v-model="form.tariffRate" />
         <text class="field-unit">%</text>
       </view>
       <view class="field">
-        <text class="field-label">目的国增值税率<text v-if="!counts.duty" class="label-note">（本术语不计入）</text></text>
+        <text class="field-label">目的国增值税率</text>
         <input class="field-input" type="digit" v-model="form.importVatRate" />
         <text class="field-unit">%</text>
       </view>
@@ -227,7 +227,7 @@
     <view class="card">
       <view class="card-title">报价结果</view>
       <view class="result-line">
-        <text class="field-label">贸易术语</text>
+        <text class="field-label">贸易方式</text>
         <text class="result-value">{{ termLabelText }}</text>
       </view>
       <view class="result-line result-line-edit">
@@ -300,7 +300,7 @@
         <text class="field-label low">低于成本</text>
         <text class="result-value low">{{ symbol }} {{ fmt(view.shortfall) }}</text>
       </view>
-      <view class="result-note" v-if="uncountedText">未计入本术语：{{ uncountedText }}</view>
+      <view class="result-note" v-if="uncountedText">未计入本次报价：{{ uncountedText }}</view>
     </view>
 
     <view class="card">
@@ -894,7 +894,7 @@ function onCopyQuote() {
     `【报价单】${productName} - ${customerName}`,
     `币种：${code}`,
     `运输方式：${transportText}`,
-    `贸易术语：${termLabelText.value}`,
+    `贸易方式：${termLabelText.value}`,
     `${r.tradeTerm}：${code} ${fmt(v.unitPrice)}/件（总价 ${code} ${fmt(v.totalPrice)}）`,
   ]
   // 手动定价时补一行说明，标明手填单价及其成本加成率

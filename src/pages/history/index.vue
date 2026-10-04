@@ -28,7 +28,7 @@
 
       <view class="detail" v-if="expandedId === item.id">
         <view class="result-line">
-          <text class="field-label">贸易术语</text>
+          <text class="field-label">贸易方式</text>
           <text class="result-value">{{ termLabel(termOf(item)) }}</text>
         </view>
         <view class="result-line">
