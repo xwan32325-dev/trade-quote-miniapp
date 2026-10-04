@@ -97,7 +97,7 @@
         <text class="fx-text fx-warn">⚠️ 该币种公开汇率源精度有限（仅 {{ fx.data.significantDigits }} 位有效数字），正式报价请以银行牌价为准</text>
       </view>
       <view class="field">
-        <text class="field-label">预期利润率</text>
+        <text class="field-label">预期利润率<text v-if="manualActive" class="label-note">（手动定价时不生效）</text></text>
         <input class="field-input" type="digit" v-model="form.profitRate" />
         <text class="field-unit">%</text>
       </view>
@@ -175,13 +175,24 @@
         <text class="field-label">贸易术语</text>
         <text class="result-value">{{ termLabelText }}</text>
       </view>
-      <view class="result-line">
+      <view class="result-line result-line-edit">
         <text class="field-label">{{ result.tradeTerm }} 单价</text>
-        <text class="result-value result-main">{{ symbol }} {{ fmt(result.unitPrice) }} / 件</text>
+        <view class="unit-edit">
+          <input
+            class="unit-input"
+            :class="{ 'unit-input-on': manualActive, 'unit-low': view.belowCost }"
+            type="digit"
+            :value="unitInputText"
+            @input="onUnitInput"
+          />
+          <text class="unit-unit">{{ symbol }} / 件</text>
+          <text v-if="manualActive" class="manual-tag">手动</text>
+          <text v-if="manualActive" class="manual-restore" @click="restoreAutoPrice">恢复按成本计算</text>
+        </view>
       </view>
       <view class="result-line">
         <text class="field-label">{{ result.tradeTerm }} 总价</text>
-        <text class="result-value result-main">{{ symbol }} {{ fmt(result.totalPrice) }}</text>
+        <text class="result-value result-main" :class="{ low: view.belowCost }">{{ symbol }} {{ fmt(view.totalPrice) }}</text>
       </view>
       <view class="dash"></view>
       <view class="result-line">
@@ -190,37 +201,45 @@
       </view>
       <view class="result-line" v-if="result.includesFreight">
         <text class="field-label">运费</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.freight) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(view.freight) }}</text>
       </view>
       <view class="result-line" v-if="result.includesInsurance">
         <text class="field-label">保险费</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.insurance) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(view.insurance) }}</text>
       </view>
       <view class="result-line" v-if="result.includesDestination">
         <text class="field-label">目的地费用</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.destinationFee) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(view.destinationFee) }}</text>
       </view>
       <view class="result-line" v-if="result.includesDuty">
         <text class="field-label">进口关税</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.tariff) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(view.tariff) }}</text>
       </view>
       <view class="result-line" v-if="result.includesDuty">
         <text class="field-label">进口增值税</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.importVat) }}</text>
+        <text class="result-value">{{ symbol }} {{ fmt(view.importVat) }}</text>
+      </view>
+      <view class="result-line" v-if="manualActive">
+        <text class="field-label">成本加成率</text>
+        <text class="result-value" :class="view.belowCost ? 'low' : 'profit'">{{ fmt(view.markupPct, 2) }}%</text>
       </view>
       <view class="result-line">
         <text class="field-label">换汇成本（按 FOB 口径）</text>
-        <text class="result-value" :class="result.isProfit ? 'profit' : result.isLoss ? 'loss' : ''">
-          {{ fmt(result.exchangeCost, rateDecimals(result.exchangeCost)) }}
-          <text v-if="result.isProfit"> 盈利</text>
-          <text v-else-if="result.isLoss"> 亏损</text>
+        <text class="result-value" :class="view.isProfit ? 'profit' : view.isLoss ? 'loss' : ''">
+          {{ fmt(view.exchangeCost, rateDecimals(view.exchangeCost)) }}
+          <text v-if="view.isProfit"> 盈利</text>
+          <text v-else-if="view.isLoss"> 亏损</text>
         </text>
       </view>
       <view class="result-line">
         <text class="field-label">盈亏率</text>
-        <text class="result-value" :class="result.profitPct >= 0 ? 'profit' : 'loss'">
-          {{ fmt(result.profitPct, 2) }}%
+        <text class="result-value" :class="view.profitPct >= 0 ? 'profit' : 'loss'">
+          {{ fmt(view.profitPct, 2) }}%
         </text>
+      </view>
+      <view class="result-line" v-if="view.belowCost">
+        <text class="field-label low">低于成本</text>
+        <text class="result-value low">{{ symbol }} {{ fmt(view.shortfall) }}</text>
       </view>
       <view class="result-note" v-if="uncountedText">未计入本术语：{{ uncountedText }}</view>
     </view>
@@ -236,7 +255,7 @@
 
 <script setup>
 import { reactive, computed, onMounted, watch } from 'vue'
-import { formatNumber } from '../../utils/calc.js'
+import { formatNumber, safeNumber } from '../../utils/calc.js'
 import { saveRecord, makeId, saveForm, loadForm } from '../../utils/storage.js'
 import { getFxRate } from '../../utils/request.js'
 import { CURRENCIES, getCurrency, rateDecimals } from '../../utils/currency.js'
@@ -251,6 +270,7 @@ import {
 } from '../../utils/transport.js'
 import {
   calcTermQuote,
+  calcManualTermQuote,
   termsForMode,
   defaultTerm,
   remapTerm,
@@ -279,9 +299,70 @@ const form = reactive({
   destinationFee: 800,
   tariffRate: 5,
   importVatRate: 13,
+  manualUnitPrice: '', // 手动单价（空串 = 按成本计算）
 })
 
 const result = computed(() => calcTermQuote(form))
+
+// ---- 手动定价状态机：manualUnitPrice 非空即进入手动定价 ----
+const manualActive = computed(
+  () => form.manualUnitPrice !== '' && form.manualUnitPrice !== null && form.manualUnitPrice !== undefined,
+)
+// 手动模式的反算结果（成本加成率 / FOB 净收入口径的换汇成本、盈亏率）
+const manualResult = computed(() => calcManualTermQuote(form, form.manualUnitPrice))
+// 单价输入框显示值：手动时显示输入原值，否则显示按成本算出的单价（2 位小数）
+const unitInputText = computed(() =>
+  manualActive.value ? String(form.manualUnitPrice) : safeNumber(result.value.unitPrice).toFixed(2),
+)
+function onUnitInput(e) {
+  form.manualUnitPrice = e.detail.value
+}
+// 点「恢复按成本计算」→ 清空手动价回到计算值
+function restoreAutoPrice() {
+  form.manualUnitPrice = ''
+}
+
+// 结果区展示口径：手动定价时总价/保险费/换汇成本/盈亏率改用反算值，其余照旧
+const view = computed(() => {
+  const r = result.value
+  if (!manualActive.value) {
+    return {
+      manual: false,
+      unitPrice: r.unitPrice,
+      totalPrice: r.totalPrice,
+      freight: r.freight,
+      insurance: r.insurance,
+      destinationFee: r.destinationFee,
+      tariff: r.tariff,
+      importVat: r.importVat,
+      exchangeCost: r.exchangeCost,
+      profitPct: r.profitPct,
+      isProfit: r.isProfit,
+      isLoss: r.isLoss,
+      markupPct: null,
+      belowCost: false,
+      shortfall: 0,
+    }
+  }
+  const m = manualResult.value
+  return {
+    manual: true,
+    unitPrice: m.manualUnit,
+    totalPrice: m.manualTotal,
+    freight: m.freight,
+    insurance: m.insurance, // 保险费按手动总价计
+    destinationFee: m.destinationFee,
+    tariff: m.tariff,
+    importVat: m.importVat,
+    exchangeCost: m.exchangeCost,
+    profitPct: m.profitPct,
+    isProfit: m.isProfit,
+    isLoss: m.isLoss,
+    markupPct: m.markupPct,
+    belowCost: m.belowCost,
+    shortfall: m.shortfall,
+  }
+})
 
 // 成本口径随术语变化：EXW 不含国内出口费用，其余术语含
 const costBaseLabel = computed(() =>
@@ -344,12 +425,18 @@ function onTransportChange(e) {
   const prev = form.transportMode
   form.transportMode = picked.code
   // 术语按语义层级自动映射，非法则回退目标方式的默认术语
-  form.tradeTerm = remapTerm(form.tradeTerm, prev, picked.code)
+  const nextTerm = remapTerm(form.tradeTerm, prev, picked.code)
+  // 术语变了 → 手动价口径不再适用，清空回到按成本计算
+  if (nextTerm !== form.tradeTerm) form.manualUnitPrice = ''
+  form.tradeTerm = nextTerm
 }
 
 function onTermChange(e) {
   const picked = termsForMode(form.transportMode)[Number(e.detail.value)]
-  if (picked) form.tradeTerm = picked.code
+  if (!picked || picked.code === form.tradeTerm) return
+  form.tradeTerm = picked.code
+  // 切换术语 → 清空手动价，避免口径错乱
+  form.manualUnitPrice = ''
 }
 
 function isMultiActive(code) {
@@ -380,6 +467,7 @@ const MEMO_KEYS = [
   'destinationFee',
   'tariffRate',
   'importVatRate',
+  'manualUnitPrice',
 ]
 
 watch(
@@ -476,6 +564,7 @@ function onCurrencyChange(e) {
   const picked = CURRENCIES[idx]
   if (!picked || picked.code === form.currency) return
   form.currency = picked.code
+  form.manualUnitPrice = '' // 切换币种 → 清空手动价，避免口径错乱
   fx.manual = false
   fx.data = null
   fetchFx({ force: true })
@@ -523,6 +612,10 @@ onMounted(() => {
   if (!isValidTerm(form.tradeTerm, form.transportMode)) {
     form.tradeTerm = defaultTerm(form.transportMode)
   }
+  // 记忆里的手动价若无法解析为有限数，视为无效，回退按成本计算
+  if (form.manualUnitPrice !== '' && !Number.isFinite(Number(form.manualUnitPrice))) {
+    form.manualUnitPrice = ''
+  }
   fetchFx()
 })
 
@@ -534,6 +627,7 @@ function onSave() {
   }
 
   const r = result.value
+  const v = view.value
   const record = {
     id: makeId(),
     productName: form.productName || '未命名产品',
@@ -542,11 +636,21 @@ function onSave() {
     transportMode: form.transportMode,
     multimodal: isMultimodal.value ? [...form.multimodal] : [],
     tradeTerm: r.tradeTerm,
-    unitPrice: r.unitPrice,
-    totalPrice: r.totalPrice,
+    unitPrice: v.unitPrice,
+    totalPrice: v.totalPrice,
     createdAt: Date.now(),
     input: { ...form },
-    result: { ...r },
+    // 手动定价时，展示口径的金额/费用/换汇成本/盈亏率一并按手动口径存档
+    result: {
+      ...r,
+      unitPrice: v.unitPrice,
+      totalPrice: v.totalPrice,
+      insurance: v.insurance,
+      tariff: v.tariff,
+      importVat: v.importVat,
+      exchangeCost: v.exchangeCost,
+      profitPct: v.profitPct,
+    },
   }
   saveRecord(record)
   uni.showToast({ title: '已保存', icon: 'success' })
@@ -560,6 +664,7 @@ function onCopyQuote() {
   }
 
   const r = result.value
+  const v = view.value
   const code = form.currency
   const productName = form.productName || '未命名产品'
   const customerName = form.customerName || '未填写客户'
@@ -567,15 +672,22 @@ function onCopyQuote() {
     ? `${MULTIMODAL.name}（${multiText.value || '未选择组合'}）`
     : transportLabel.value
   // 外贸单据统一用币种代码，避免 ¥ / $ 符号歧义；只报所选术语
-  const text = [
+  const lines = [
     `【报价单】${productName} - ${customerName}`,
     `币种：${code}`,
     `运输方式：${transportText}`,
     `贸易术语：${termLabelText.value}`,
-    `${r.tradeTerm}：${code} ${fmt(r.unitPrice)}/件（总价 ${code} ${fmt(r.totalPrice)}）`,
-    `数量：${fmt(r.qty, 0)} 件 | 汇率：1 ${code} = ${rateText.value} ¥ | 盈亏率：${fmt(r.profitPct, 2)}%`,
+    `${r.tradeTerm}：${code} ${fmt(v.unitPrice)}/件（总价 ${code} ${fmt(v.totalPrice)}）`,
+  ]
+  // 手动定价时补一行说明，标明手填单价及其成本加成率
+  if (manualActive.value) {
+    lines.push(`定价方式：手动定价（成本加成率 ${fmt(v.markupPct, 2)}%）`)
+  }
+  lines.push(
+    `数量：${fmt(r.qty, 0)} 件 | 汇率：1 ${code} = ${rateText.value} ¥ | 盈亏率：${fmt(v.profitPct, 2)}%`,
     '有效期：30 天',
-  ].join('\n')
+  )
+  const text = lines.join('\n')
   uni.setClipboardData({
     data: text,
     success: () => uni.showToast({ title: '已复制', icon: 'success' }),
@@ -650,6 +762,56 @@ picker .field {
 .result-main {
   font-size: 34rpx;
   color: #111827;
+}
+/* 手动价低于成本时的红色金额（scoped 覆盖 .result-main 的黑色） */
+.low {
+  color: #dc2626;
+}
+
+/* 单价可编辑：输入框 + 手动标记 + 恢复按钮 */
+.result-line-edit {
+  align-items: flex-start;
+}
+.unit-edit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8rpx;
+  max-width: 480rpx;
+}
+.unit-input {
+  width: 180rpx;
+  text-align: right;
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #111827;
+  border-bottom: 1rpx dashed #cbd5e1;
+  padding: 0 4rpx;
+}
+.unit-input-on {
+  border-bottom-color: #2563eb;
+}
+.unit-low {
+  color: #dc2626;
+  border-bottom-color: #dc2626;
+}
+.unit-unit {
+  font-size: 26rpx;
+  color: #6b7280;
+}
+.manual-tag {
+  font-size: 20rpx;
+  line-height: 1;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1rpx solid #bfdbfe;
+  border-radius: 6rpx;
+  padding: 4rpx 10rpx;
+}
+.manual-restore {
+  font-size: 22rpx;
+  color: #2563eb;
 }
 /* 结果区细分隔线 */
 .dash {

@@ -189,3 +189,69 @@ export function calcTermQuote(input = {}) {
   out.isLoss = out.exchangeCost > 0 && out.exchangeCost > out.exchangeRate
   return out
 }
+
+/**
+ * 手动定价反算（口径见 TASK-MANUALPRICE.md 第二节）
+ * 手填单价 U 后：先求成本基准（利润率置 0 的 calcTermQuote 单价 U0$）得 C$ = U0$ × Q，
+ * 再反算利润额与成本加成率；最后按术语扣掉相对 FOB 的附加费用得到 FOB 净收入，
+ * 算换汇成本与盈亏率。不改动 calcTermQuote，只额外以「利润率置 0」调用一次。
+ * @param {object} input 与 calcTermQuote 相同（含 tradeTerm / qty / exchangeRate / domesticFee 等）
+ * @param {number|string} manualUnitPrice 手动单价 U（外币/件）
+ * @returns 反算指标；所有数值字段保证有限（无 NaN / Infinity）
+ */
+export function calcManualTermQuote(input = {}, manualUnitPrice) {
+  const qty = safeNumber(input.qty)
+  const exchangeRate = safeNumber(input.exchangeRate)
+  const insuranceRate = safeNumber(input.insuranceRate)
+  const markupRate = safeNumber(input.markupRate)
+  const domesticFee = safeNumber(input.domesticFee)
+  const term = String(input.tradeTerm || input.term || 'FOB').toUpperCase()
+
+  // 成本基准：利润率临时置 0，同口径算出该术语单价 U0$ 与总价 C$
+  const cost = calcTermQuote({ ...input, profitRate: 0 })
+  const costTotal = cost.unitPrice * qty
+
+  // 手动总价 T$、利润额与成本加成率（C$ 为 0 时返回 0）
+  const manualUnit = safeNumber(manualUnitPrice)
+  const manualTotal = manualUnit * qty
+  const profitAmount = manualTotal - costTotal
+  const markupPct = safeDivide(profitAmount, costTotal) * 100
+
+  // 保险费仍按现有公式，基数换成手动总价：保险$ = T$ × I/100 × (1+M/100)
+  const insurance = manualTotal * (insuranceRate / 100) * (1 + markupRate / 100)
+
+  // 该术语相对 FOB 多出来的附加费用（EXW 为负：不含国内费用，倒推 FOB 要加回国内费用）
+  let extra = 0
+  if (term === 'CFR' || term === 'CPT') extra = cost.freight
+  else if (term === 'CIF' || term === 'CIP') extra = cost.freight + insurance
+  else if (term === 'DAP' || term === 'DPU') extra = cost.freight + cost.destinationFee
+  else if (term === 'DDP') extra = cost.freight + cost.destinationFee + cost.tariff + cost.importVat
+  else if (term === 'EXW') extra = -safeDivide(domesticFee, exchangeRate)
+  // FAS / FOB / FCA → 0
+
+  const fobNet = manualTotal - extra
+  const exportCost = cost.withDomestic // 出口总成本¥（含国内费用，与利润率无关）
+  const exchangeCost = safeDivide(exportCost, fobNet)
+  const profitPct = safeDivide(fobNet * exchangeRate - exportCost, exportCost) * 100
+
+  const out = sanitizeNumbers({
+    tradeTerm: term,
+    exchangeRate,
+    manualUnit, manualTotal,
+    costUnit: cost.unitPrice, costTotal,
+    profitAmount, markupPct,
+    insurance, extra, fobNet,
+    exportCost, exchangeCost, profitPct,
+    // 费用明细沿用成本基准（利润率置 0）口径，展示与 FOB 净收入扣减保持一致
+    freight: cost.freight,
+    destinationFee: cost.destinationFee,
+    tariff: cost.tariff,
+    importVat: cost.importVat,
+    belowCost: profitAmount < 0,
+    shortfall: profitAmount < 0 ? -profitAmount : 0,
+  })
+  // 换汇成本以汇率对照盈亏，与 calcTermQuote 同口径
+  out.isProfit = out.exchangeCost > 0 && out.exchangeCost < exchangeRate
+  out.isLoss = out.exchangeCost > 0 && out.exchangeCost > exchangeRate
+  return out
+}

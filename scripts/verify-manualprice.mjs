@@ -1,0 +1,139 @@
+// 临时自测脚本：在 Node 中直接跑 src/utils/incoterms.js 的手动定价反算
+// incoterms.js 依赖 calc.js / transport.js，这里把三个文件源码拼接后动态导入
+// 用法：node scripts/verify-manualprice.mjs
+import { readFileSync } from 'node:fs'
+
+function load(rel) {
+  return readFileSync(new URL(rel, import.meta.url), 'utf8')
+    .replace(/^\s*import\b.*$/gm, '') // 去掉 import 语句（拼接后同处一个作用域）
+    .replace(/^\s*export\s+/gm, '') // 去掉 export 关键字
+}
+
+const src =
+  [
+    load('../src/utils/calc.js'),
+    load('../src/utils/transport.js'),
+    load('../src/utils/incoterms.js'),
+  ].join('\n') +
+  '\nexport { calcTermQuote, calcManualTermQuote, INCOTERMS };'
+
+const mod = await import('data:text/javascript,' + encodeURIComponent(src))
+const { calcTermQuote, calcManualTermQuote, INCOTERMS } = mod
+
+let pass = 0
+let fail = 0
+const TOL = 1e-6
+
+function ok(name, cond, extra = '') {
+  if (cond) pass++
+  else fail++
+  console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  ' + extra : ''}`)
+}
+function close(name, actual, expected, tol = TOL) {
+  ok(name, Number.isFinite(actual) && Math.abs(actual - expected) <= tol, `实际=${actual} 期望≈${expected}`)
+}
+function finite(name, actual) {
+  ok(name, Number.isFinite(actual), `实际=${actual}`)
+}
+
+// 默认参数（与报价页默认值一致）
+const D = {
+  price: 100, qty: 1000, vatRate: 13, rebateRate: 13, domesticFee: 2000,
+  exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
+  destinationFee: 800, tariffRate: 5, importVatRate: 13,
+}
+
+console.log('===== 用例 1：11 种术语手动定价均无 NaN/Infinity =====')
+for (const t of INCOTERMS) {
+  const r = calcManualTermQuote({ ...D, tradeTerm: t.code }, 20)
+  const bad = Object.keys(r).filter((k) => typeof r[k] === 'number' && !Number.isFinite(r[k]))
+  ok(`${t.code} 全部数值有限`, bad.length === 0, bad.length ? `异常字段=${bad.join(',')}` : '')
+}
+// 数量 0 / 汇率 0 两个除零边界
+for (const t of INCOTERMS) {
+  const zq = calcManualTermQuote({ ...D, tradeTerm: t.code, qty: 0 }, 20)
+  const zr = calcManualTermQuote({ ...D, tradeTerm: t.code, exchangeRate: 0 }, 20)
+  const badQ = Object.keys(zq).filter((k) => typeof zq[k] === 'number' && !Number.isFinite(zq[k]))
+  const badR = Object.keys(zr).filter((k) => typeof zr[k] === 'number' && !Number.isFinite(zr[k]))
+  ok(`${t.code} 数量 0 无 NaN`, badQ.length === 0, badQ.join(','))
+  ok(`${t.code} 汇率 0 无 NaN`, badR.length === 0, badR.join(','))
+}
+
+console.log('\n===== 用例 2：手动价 = 成本价 → 成本加成率 0，盈亏率同按成本计算 =====')
+// 利润率置 0 时，「按成本计算价」即成本基准价，两者可比
+const base0 = calcTermQuote({ ...D, tradeTerm: 'FOB', profitRate: 0 })
+const m0 = calcManualTermQuote({ ...D, tradeTerm: 'FOB', profitRate: 0 }, base0.unitPrice)
+close('FOB 手动价=成本价 → 成本加成率 0', m0.markupPct, 0, 1e-9)
+close('FOB 手动价=成本价 → 盈亏率 = 按成本计算(0)', m0.profitPct, base0.profitPct, 1e-9)
+close('FOB 手动价=成本价 → 利润额 0', m0.profitAmount, 0, 1e-6)
+
+console.log('\n===== 用例 3：手动价 = 成本价 × 1.2 → 成本加成率 ≈ 20% =====')
+const m12 = calcManualTermQuote({ ...D, tradeTerm: 'FOB' }, base0.unitPrice * 1.2)
+close('成本加成率 ≈ 20', m12.markupPct, 20, 1e-6)
+close('利润额 = 0.2 × 成本基准', m12.profitAmount, 0.2 * m12.costTotal, 1e-6)
+// 手动价 = 按成本计算价（利润率 10）→ 成本加成率=10 且盈亏率与按成本计算一致
+const autoFob = calcTermQuote({ ...D, tradeTerm: 'FOB' })
+const mAuto = calcManualTermQuote({ ...D, tradeTerm: 'FOB' }, autoFob.unitPrice)
+close('手动价=按成本计算价 → 成本加成率=10', mAuto.markupPct, 10, 1e-6)
+close('手动价=按成本计算价 → 盈亏率 = 按成本计算(10)', mAuto.profitPct, autoFob.profitPct, 1e-6)
+
+console.log('\n===== 用例 4：手动价低于成本 → 利润额为负、标记低于成本 =====')
+const mHalf = calcManualTermQuote({ ...D, tradeTerm: 'FOB' }, base0.unitPrice * 0.5)
+ok('利润额为负', mHalf.profitAmount < 0, `profitAmount=${mHalf.profitAmount}`)
+ok('成本加成率为负', mHalf.markupPct < 0, `markupPct=${mHalf.markupPct}`)
+ok('belowCost 标记为真', mHalf.belowCost === true)
+close('shortfall = -利润额', mHalf.shortfall, -mHalf.profitAmount, 1e-6)
+ok('盈亏率为负', mHalf.profitPct < 0, `profitPct=${mHalf.profitPct}`)
+
+console.log('\n===== 用例 5：FOB 净收入按术语扣减附加费用（方向正确）=====')
+const U = 20
+const bFob = calcTermQuote({ ...D, tradeTerm: 'FOB', profitRate: 0 })
+const bCfr = calcTermQuote({ ...D, tradeTerm: 'CFR', profitRate: 0 })
+const bDap = calcTermQuote({ ...D, tradeTerm: 'DAP', profitRate: 0 })
+const bDdp = calcTermQuote({ ...D, tradeTerm: 'DDP', profitRate: 0 })
+const mFob = calcManualTermQuote({ ...D, tradeTerm: 'FOB' }, U)
+const mCfr = calcManualTermQuote({ ...D, tradeTerm: 'CFR' }, U)
+const mCif = calcManualTermQuote({ ...D, tradeTerm: 'CIF' }, U)
+const mDap = calcManualTermQuote({ ...D, tradeTerm: 'DAP' }, U)
+const mDdp = calcManualTermQuote({ ...D, tradeTerm: 'DDP' }, U)
+const mExw = calcManualTermQuote({ ...D, tradeTerm: 'EXW' }, U)
+
+close('FAS/FOB/FCA 附加费用 = 0', mFob.extra, 0, 1e-9)
+close('CFR 附加费用 = 运费', mCfr.extra, bCfr.freight, 1e-9)
+close('CIF 附加费用 = 运费 + 保险(按手动总价)', mCif.extra, bCfr.freight + U * D.qty * (D.insuranceRate / 100) * (1 + D.markupRate / 100), 1e-6)
+close('DAP 附加费用 = 运费 + 目的地费用', mDap.extra, bDap.freight + bDap.destinationFee, 1e-9)
+close('DDP 附加费用 = 运费+目的地+关税+进口增值税', mDdp.extra, bDdp.freight + bDdp.destinationFee + bDdp.tariff + bDdp.importVat, 1e-6)
+close('EXW 附加费用 = -国内费用/汇率', mExw.extra, -(D.domesticFee / D.exchangeRate), 1e-9)
+close('EXW FOB 净收入 = 手动总价 + 国内费用/汇率', mExw.fobNet, U * D.qty - mExw.extra, 1e-9)
+// 展示的费用明细也须沿用置 0 的成本基准，才能与 FOB 净收入扣减口径一致
+close('DDP 展示关税沿用成本基准', mDdp.tariff, bDdp.tariff, 1e-9)
+close('DDP 展示进口增值税沿用成本基准', mDdp.importVat, bDdp.importVat, 1e-9)
+// FOB 净收入 = 手动总价 - 附加费用
+close('DDP FOB 净收入 = 手动总价 - 附加费用', mDdp.fobNet, U * D.qty - mDdp.extra, 1e-6)
+// 手动价定为 DDP 成本价时，FOB 净收入应近似等于含国内成本/汇率
+close('DDP 手动=成本价 → 换汇成本 ≈ 汇率', calcManualTermQuote({ ...D, tradeTerm: 'DDP' }, bDdp.unitPrice).exchangeCost, D.exchangeRate, 1e-6)
+close('DDP 手动=成本价 → 盈亏率 ≈ 0', calcManualTermQuote({ ...D, tradeTerm: 'DDP' }, bDdp.unitPrice).profitPct, 0, 1e-6)
+
+console.log('\n===== 用例 6：手动价=成本基准(U0)时，换汇成本/盈亏率与置0的按成本计算同口径 =====')
+// 注：EXW/DDP 的附加费用/税费本身取自置 0 的成本基准，故只在利润率置 0 时两者才严格一致
+for (const t of INCOTERMS) {
+  const base = calcTermQuote({ ...D, tradeTerm: t.code, profitRate: 0 })
+  const man = calcManualTermQuote({ ...D, tradeTerm: t.code, profitRate: 0 }, base.unitPrice)
+  close(`${t.code} 手动=成本基准 → 盈亏率同按成本计算`, man.profitPct, base.profitPct, 1e-9)
+  close(`${t.code} 手动=成本基准 → 换汇成本同按成本计算`, man.exchangeCost, base.exchangeCost, 1e-9)
+}
+
+console.log('\n===== 用例 7：除零边界返回 0 而非 NaN =====')
+const zQty = calcManualTermQuote({ ...D, tradeTerm: 'DDP', qty: 0 }, 20)
+finite('数量 0 成本加成率有限', zQty.markupPct)
+finite('数量 0 换汇成本有限', zQty.exchangeCost)
+finite('数量 0 盈亏率有限', zQty.profitPct)
+const zRate = calcManualTermQuote({ ...D, tradeTerm: 'EXW', exchangeRate: 0 }, 20)
+finite('汇率 0 换汇成本有限', zRate.exchangeCost)
+finite('汇率 0 盈亏率有限', zRate.profitPct)
+const zCost = calcManualTermQuote({ ...D, price: 0, domesticFee: 0, qty: 1000, tradeTerm: 'FOB' }, 5)
+close('零成本时成本加成率返回 0', zCost.markupPct, 0, 1e-9)
+finite('零成本时盈亏率有限', zCost.profitPct)
+
+console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
+process.exit(fail === 0 ? 0 : 1)
