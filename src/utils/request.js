@@ -4,7 +4,24 @@
  */
 
 const API_BASE_KEY = 'apiBase';
-const DEFAULT_API_BASE = 'http://localhost:8787';
+
+/**
+ * 默认后端地址：
+ * - H5（浏览器/公网部署）：与页面同源，部署到哪台服务器就用哪台，无需改代码
+ * - 小程序：默认连本机开发后端
+ */
+function resolveDefaultBase() {
+  // #ifdef H5
+  try {
+    if (typeof window !== 'undefined' && window.location && window.location.origin) {
+      return window.location.origin;
+    }
+  } catch (e) {}
+  // #endif
+  return 'http://localhost:8787';
+}
+
+const DEFAULT_API_BASE = resolveDefaultBase();
 
 /** 取当前后端地址：优先本地存储，其次默认值 */
 export function getApiBase() {
