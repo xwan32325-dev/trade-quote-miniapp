@@ -430,8 +430,10 @@ function onCopyQuote() {
 }
 .fx-up {
   color: #dc2626;
+  margin-left: 6rpx;
 }
 .fx-down {
   color: #16a34a;
+  margin-left: 6rpx;
 }
 </style>
