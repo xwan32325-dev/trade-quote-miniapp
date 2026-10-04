@@ -87,40 +87,60 @@ function itemGoodsValue(it) {
   return (itemPrice(it) - itemRefundPerUnit(it)) * safeNumber(it && it.qty)
 }
 
-/** 保留 2 位小数（-0 归一为 0） */
-function round2(v) {
-  const r = Math.round(safeNumber(v) * 100) / 100
+/** 保留 n 位小数（-0 归一为 0） */
+function roundN(v, n) {
+  const f = Math.pow(10, n)
+  const r = Math.round(safeNumber(v) * f) / f
   return r === 0 ? 0 : r
 }
 
+/** 保留 2 位小数 */
+function round2(v) {
+  return roundN(v, 2)
+}
+
 /**
- * 按货值占比把整单总价分摊到各行（口径见 TASK-MULTIITEM.md 第一节）
- *   行占比 = 行货值 / 整单货值（整单货值为 0 时占比为 0，不出现 NaN）
- *   行总价 = 整单总价 × 行占比，最后一行用「整单总价 − 前面各行之和」兜底，
- *   保证四舍五入后明细合计 = 整单合计
+ * 按货值占比把整单总价分摊到各行（口径见 TASK-ROUNDING.md 第一/二节）
+ *   行分摊总价 = 整单总价 × 行货值占比（整单货值为 0 时占比为 0，不出现 NaN）
+ *   行单价     = round(行分摊总价 ÷ 行数量, 2)        // 数量为 0 时单价为 0
+ *   行金额     = round(行单价 × 行数量, 2)            // 保证「单价 × 数量 = 金额」
+ * exact=true（手动定价多行）时，把与手填总价的差额补到【最后一行】：
+ *   最后一行金额 = 手填总价 − 前面各行金额之和（Σ 行金额 严格等于手填总价）
+ *   最后一行单价 = round(最后一行金额 ÷ 数量, 3)      // 允许 3 位用于兜底
  * @param {Array<{productName?:string, qty:number, price?:number, unitPrice?:number, vatRate?:number, rebateRate?:number}>} items
- * @param {number|string} totalPrice 整单总价（外币）
+ * @param {number|string} totalPrice 整单总价（外币；手动定价时为用户手填值）
+ * @param {boolean} [exact] 是否要求 Σ 行金额 精确等于 totalPrice（手动定价多行传 true）
  * @returns {Array<{productName:string, qty:number, unitPrice:number, totalPrice:number}>}
  */
-export function allocateItems(items, totalPrice) {
+export function allocateItems(items, totalPrice, exact = false) {
   const list = Array.isArray(items) ? items : []
   const goods = list.map(itemGoodsValue)
   const goodsTotal = goods.reduce((sum, v) => sum + v, 0)
   const total = round2(totalPrice)
+  const last = list.length - 1
   let allocated = 0
   return list.map((it, i) => {
     const qty = safeNumber(it && it.qty)
-    const share = goodsTotal > 0 ? goods[i] / goodsTotal : 0
-    const isLast = i === list.length - 1
-    const rowTotal = isLast ? round2(total - allocated) : round2(total * share)
-    allocated = round2(allocated + rowTotal)
-    return {
-      productName: it && it.productName ? String(it.productName) : '',
-      qty,
-      unitPrice: round2(safeDivide(rowTotal, qty)),
-      totalPrice: rowTotal,
+    const productName = it && it.productName ? String(it.productName) : ''
+    // 手动定价兜底：最后一行吃掉全部差额，金额严格对上手填总价
+    if (exact && i === last) {
+      const rowTotal = round2(total - allocated)
+      return { productName, qty, unitPrice: roundN(safeDivide(rowTotal, qty), 3), totalPrice: rowTotal }
     }
+    const share = goodsTotal > 0 ? goods[i] / goodsTotal : 0
+    const unitPrice = round2(safeDivide(total * share, qty))
+    const rowTotal = round2(unitPrice * qty)
+    allocated = round2(allocated + rowTotal)
+    return { productName, qty, unitPrice, totalPrice: rowTotal }
   })
+}
+
+/**
+ * Σ 行金额 = 整单总价（新口径：整单总价就是各行金额之和）
+ * @param {Array<{totalPrice:number}>} rows allocateItems 的返回值
+ */
+export function sumItems(rows) {
+  return round2((Array.isArray(rows) ? rows : []).reduce((sum, r) => sum + safeNumber(r && r.totalPrice), 0))
 }
 
 /** 按代码查术语，找不到返回 null */

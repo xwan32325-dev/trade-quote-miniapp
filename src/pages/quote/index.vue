@@ -420,6 +420,7 @@ import {
   calcTermQuote,
   calcManualTermQuote,
   allocateItems,
+  sumItems,
   termsForMode,
   defaultTerm,
   remapTerm,
@@ -502,14 +503,32 @@ const result = computed(() => calcTermQuote(calcInput.value))
 const manualActive = computed(
   () => form.manualPrice !== '' && form.manualPrice !== null && form.manualPrice !== undefined,
 )
-// 手动模式的反算结果；多行时手填值即整单总价（isTotal=true），单行时仍为单价
-const manualResult = computed(() =>
-  calcManualTermQuote(calcInput.value, form.manualPrice, isMulti.value),
+
+// 分摊基数：手动定价取手填值（多行为整单总价、单行为单价×数量），否则取按成本算出的术语总价
+const allocBasePrice = computed(() => {
+  if (!manualActive.value) return result.value.totalPrice
+  const p = safeNumber(form.manualPrice)
+  return isMulti.value ? p : p * totalQty.value
+})
+
+// 每行分摊（新口径见 TASK-ROUNDING.md 第一节）：行金额 = round(行单价 × 行数量)，
+// 保证「单价 × 数量 = 金额」；手动定价多行时精确命中手填整单总价（最后一行兜底，单价允许 3 位）
+const allocatedItems = computed(() =>
+  allocateItems(form.items, allocBasePrice.value, manualActive.value && isMulti.value),
 )
-// 定价输入框显示值：手动时显示输入原值，否则显示按成本算出的值（2 位小数）
+// 整单总价 = Σ 行金额（结果区、合计行、复制、保存、导出统一用这一个数）
+const grandTotal = computed(() => sumItems(allocatedItems.value))
+// 第一行单价（单行报价的单价展示、记录里的 unitPrice）
+const firstUnitPrice = computed(() =>
+  allocatedItems.value.length ? allocatedItems.value[0].unitPrice : 0,
+)
+// 换汇成本 / 盈亏率 / 成本加成率：基于 Σ 行金额 反算（与按成本口径的差异只在分位）
+const totalMetrics = computed(() => calcManualTermQuote(calcInput.value, grandTotal.value, true))
+
+// 定价输入框显示值：手动时显示输入原值，否则显示分摊后的值（单行为单价、多行为整单总价）
 const priceInputText = computed(() => {
   if (manualActive.value) return String(form.manualPrice)
-  const auto = isMulti.value ? result.value.totalPrice : result.value.unitPrice
+  const auto = isMulti.value ? grandTotal.value : firstUnitPrice.value
   return safeNumber(auto).toFixed(2)
 })
 function onPriceInput(e) {
@@ -520,50 +539,48 @@ function restoreAutoPrice() {
   form.manualPrice = ''
 }
 
-// 结果区展示口径：手动定价时总价/保险费/换汇成本/盈亏率改用反算值，其余照旧
+// 结果区展示口径：金额统一取分摊后的同一组数；手动定价时费用/指标改用基于 Σ 行金额 的反算值
 const view = computed(() => {
   const r = result.value
+  const t = totalMetrics.value
   if (!manualActive.value) {
     return {
       manual: false,
-      unitPrice: r.unitPrice,
-      totalPrice: r.totalPrice,
+      unitPrice: firstUnitPrice.value,
+      totalPrice: grandTotal.value,
       freight: r.freight,
       insurance: r.insurance,
       destinationFee: r.destinationFee,
       tariff: r.tariff,
       importVat: r.importVat,
-      exchangeCost: r.exchangeCost,
-      profitPct: r.profitPct,
-      isProfit: r.isProfit,
-      isLoss: r.isLoss,
+      exchangeCost: t.exchangeCost,
+      profitPct: t.profitPct,
+      isProfit: t.isProfit,
+      isLoss: t.isLoss,
       markupPct: null,
       belowCost: false,
       shortfall: 0,
     }
   }
-  const m = manualResult.value
   return {
     manual: true,
-    unitPrice: m.manualUnit,
-    totalPrice: m.manualTotal,
-    freight: m.freight,
-    insurance: m.insurance, // 保险费按手动总价计
-    destinationFee: m.destinationFee,
-    tariff: m.tariff,
-    importVat: m.importVat,
-    exchangeCost: m.exchangeCost,
-    profitPct: m.profitPct,
-    isProfit: m.isProfit,
-    isLoss: m.isLoss,
-    markupPct: m.markupPct,
-    belowCost: m.belowCost,
-    shortfall: m.shortfall,
+    unitPrice: firstUnitPrice.value,
+    totalPrice: grandTotal.value,
+    freight: t.freight,
+    insurance: t.insurance, // 保险费按整单总价（Σ 行金额）计
+    destinationFee: t.destinationFee,
+    tariff: t.tariff,
+    importVat: t.importVat,
+    exchangeCost: t.exchangeCost,
+    profitPct: t.profitPct,
+    isProfit: t.isProfit,
+    isLoss: t.isLoss,
+    markupPct: t.markupPct,
+    belowCost: t.belowCost,
+    shortfall: t.shortfall,
   }
 })
 
-// 每行分摊结果：按货值占比把整单总价（展示口径，含手动定价）分摊到各行
-const allocatedItems = computed(() => allocateItems(form.items, view.value.totalPrice))
 // 首行产品名（记录标题 / 导出扁平字段的兜底）
 const firstItemName = computed(() => (form.items[0] && form.items[0].productName) || '未命名产品')
 
@@ -1127,24 +1144,31 @@ function closeExport() {
   exportState.show = false
 }
 
-// 组装后端 payload：金额取当前所选贸易方式的计算结果（与结果区一致）
+// 组装后端 payload：行单价/行金额/整单总价与结果区同源（金额 = 单价 × 数量）
 function buildExportPayload(format) {
   const r = result.value
-  const v = view.value
+  const rows = allocatedItems.value.map((row) => ({
+    productName: row.productName || '未命名产品',
+    qty: row.qty,
+    unitPrice: row.unitPrice,
+    totalPrice: row.totalPrice,
+  }))
+  // 导出前自检：Σ 行金额必须等于整单总价（容差 0.01），不一致时暴露出来便于以后回归
+  const sum = sumItems(rows)
+  if (Math.abs(sum - grandTotal.value) > 0.01) {
+    console.warn(`[quote-doc] 金额自检失败：Σ行金额 ${sum} ≠ 整单总价 ${grandTotal.value}`)
+    uni.showToast({ title: '金额自检异常，请核对明细', icon: 'none' })
+  }
+  // 扁平字段取第一行（向后兼容旧后端），同样满足 单价 × 数量 = 金额
+  const first = rows[0] || { productName: firstItemName.value, qty: 0, unitPrice: 0, totalPrice: 0 }
   return {
     quote: {
-      // 多行明细（分摊后的行单价/行金额）；同时保留扁平字段（取第一行）向后兼容
-      items: allocatedItems.value.map((row) => ({
-        productName: row.productName || '未命名产品',
-        qty: row.qty,
-        unitPrice: row.unitPrice,
-        totalPrice: row.totalPrice,
-      })),
-      productName: firstItemName.value,
+      items: rows,
+      productName: first.productName,
       customerName: form.customerName || '',
-      qty: totalQty.value,
-      unitPrice: v.unitPrice,
-      totalPrice: v.totalPrice,
+      qty: first.qty,
+      unitPrice: first.unitPrice,
+      totalPrice: first.totalPrice,
       currency: form.currency,
       tradeTerm: r.tradeTerm,
       transportMode: isMultimodal.value ? MULTIMODAL.name : transportLabel.value,

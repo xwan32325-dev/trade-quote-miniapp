@@ -15,10 +15,10 @@ const src =
     load('../src/utils/transport.js'),
     load('../src/utils/incoterms.js'),
   ].join('\n') +
-  '\nexport { calcTermQuote, calcManualTermQuote, INCOTERMS };'
+  '\nexport { calcTermQuote, calcManualTermQuote, allocateItems, sumItems, INCOTERMS };'
 
 const mod = await import('data:text/javascript,' + encodeURIComponent(src))
-const { calcTermQuote, calcManualTermQuote, INCOTERMS } = mod
+const { calcTermQuote, calcManualTermQuote, allocateItems, sumItems, INCOTERMS } = mod
 
 let pass = 0
 let fail = 0
@@ -180,6 +180,29 @@ close('整单手动价=成本基准总价 → 成本加成率 0', calcManualTerm
 // 数量 0 边界不出现 NaN
 const z = calcManualTermQuote({ ...D, items: ITEMS.map((it) => ({ ...it, qty: 0 })), tradeTerm: 'DDP' }, 100, true)
 ok('多行数量 0 → 手动反算全部有限', Object.keys(z).every((k) => typeof z[k] !== 'number' || Number.isFinite(z[k])))
+
+console.log('\n===== 用例 10：手动定价分摊 —— Σ 行金额 精确等于手填总价（新口径）=====')
+// 用户手填「整单总价」时，分摊后必须严格对上：行金额 = round(行单价×行数量)，最后一行兜底
+for (const t of [0.47, 14.80, 1234.567, 5000]) {
+  const T = Math.round(t * 100) / 100
+  const rows = allocateItems(ITEMS, t, true)
+  ok(`手填 $${t} → Σ 行金额 === 手填总价（严格相等）`, sumItems(rows) === T, `Σ=${sumItems(rows)} 期望=${T}`)
+  ok(`手填 $${t} → 每行金额/单价有限（无 NaN）`,
+    rows.every((r) => Number.isFinite(r.unitPrice) && Number.isFinite(r.totalPrice)))
+  ok(`手填 $${t} → 前 n-1 行 单价×数量=金额`,
+    rows.slice(0, -1).every((r) => Math.abs(Math.round(r.unitPrice * r.qty * 100) / 100 - r.totalPrice) < 1e-9))
+  ok(`手填 $${t} → 最后一行 = 手填总价 − 前面各行之和`,
+    Math.abs(rows[rows.length - 1].totalPrice - (T - rows.slice(0, -1).reduce((s, r) => s + r.totalPrice, 0))) < 1e-9)
+}
+// 单行手动 = 单价输入：页面把手填单价 × 数量 作为整单总价送入分摊 → 行单价 20、金额 20000
+const oneRow = allocateItems([{ productName: '单', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 20 * 1000)
+ok('单行手动：单价 × 数量 = 金额', oneRow[0].unitPrice === 20 && oneRow[0].totalPrice === 20000,
+  `${oneRow[0].unitPrice}×1000=${oneRow[0].totalPrice}`)
+// 数量 0 / 货值 0 边界：不得出现 NaN，且手填总价仍严格命中
+const zRows = allocateItems(ITEMS.map((it) => ({ ...it, qty: 0 })), 1000, true)
+ok('手动多行数量 0 → 无 NaN 且 Σ = 手填总价',
+  zRows.every((r) => Number.isFinite(r.unitPrice) && Number.isFinite(r.totalPrice)) && sumItems(zRows) === 1000,
+  `Σ=${sumItems(zRows)}`)
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

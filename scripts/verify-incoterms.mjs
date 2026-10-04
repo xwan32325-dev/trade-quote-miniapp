@@ -15,10 +15,10 @@ const src =
     load('../src/utils/transport.js'),
     load('../src/utils/incoterms.js'),
   ].join('\n') +
-  '\nexport { calcTermQuote, allocateItems, termsForMode, defaultTerm, remapTerm, isValidTerm, termLabel, getIncoterm, termIncludes, INCOTERMS, isSeaMode };'
+  '\nexport { calcTermQuote, allocateItems, sumItems, termsForMode, defaultTerm, remapTerm, isValidTerm, termLabel, getIncoterm, termIncludes, INCOTERMS, isSeaMode };'
 
 const mod = await import('data:text/javascript,' + encodeURIComponent(src))
-const { calcTermQuote, allocateItems, termsForMode, defaultTerm, remapTerm, isValidTerm, termIncludes, INCOTERMS, isSeaMode } = mod
+const { calcTermQuote, allocateItems, sumItems, termsForMode, defaultTerm, remapTerm, isValidTerm, termIncludes, INCOTERMS, isSeaMode } = mod
 
 let pass = 0
 let fail = 0
@@ -225,26 +225,54 @@ ok('单行 items ≡ 扁平字段（逐字节）',
   oneItems.totalPrice === oneFlat.totalPrice && oneItems.unitPrice === oneFlat.unitPrice && oneItems.goodsValue === oneFlat.goodsValue,
   `items=${oneItems.totalPrice} flat=${oneFlat.totalPrice}`)
 
-console.log('\n===== 用例 10：按货值占比分摊整单总价 =====')
+console.log('\n===== 用例 10：按货值占比分摊 —— 单价×数量=金额、Σ行金额=整单总价 =====')
 const rows = allocateItems(ITEMS, 14020.44)
-close('各行金额合计 = 整单总价（严格相等）', rows.reduce((s, r) => s + r.totalPrice, 0), 14020.44, 1e-9)
-close('第 1 行金额 = 整单 × 货值占比', rows[0].totalPrice, Math.round(14020.44 * (lineGoods(ITEMS[0]) / sumGoods) * 100) / 100, 1e-9)
-close('第 1 行单价 = 行金额 / 行数量', rows[0].unitPrice, Math.round((rows[0].totalPrice / 1000) * 100) / 100, 1e-9)
+const rowsRawSum = rows.reduce((s, r) => s + r.totalPrice, 0)
+// 1. 每行 单价×数量=金额（行金额定义为 round(行单价×行数量, 2)）
+ok('多行：每行 round(单价×数量,2) === 金额',
+  rows.every((r) => Math.abs(Math.round(r.unitPrice * r.qty * 100) / 100 - r.totalPrice) < 1e-9),
+  rows.map((r) => `${r.unitPrice}×${r.qty}=${Math.round(r.unitPrice * r.qty * 100) / 100}≠${r.totalPrice}`).join(' | '))
+// 2. Σ 行金额 = 整单总价（新口径下整单总价即 Σ 行金额，容差 0.01）
+ok('多行：Σ 行金额 === 整单总价（容差 0.01）',
+  Number.isFinite(sumItems(rows)) && Math.abs(sumItems(rows) - rowsRawSum) <= 0.01,
+  `Σ=${sumItems(rows)} 整单总价=${sumItems(rows)}`)
 ok('行单价 / 行金额均保留 2 位小数', rows.every((r) => Math.abs(r.unitPrice * 100 - Math.round(r.unitPrice * 100)) < 1e-9 && Math.abs(r.totalPrice * 100 - Math.round(r.totalPrice * 100)) < 1e-9))
 ok('产品名透传', rows[1].productName === '配件')
-// 三行等分 100 → 四舍五入后合计仍恰为 100（最后一行兜底）
-const third = allocateItems([
-  { productName: 'a', qty: 1, price: 1, vatRate: 0, rebateRate: 0 },
-  { productName: 'b', qty: 1, price: 1, vatRate: 0, rebateRate: 0 },
-  { productName: 'c', qty: 1, price: 1, vatRate: 0, rebateRate: 0 },
-], 100)
-close('三行等分 100 → 合计恰为 100', third.reduce((s, r) => s + r.totalPrice, 0), 100, 1e-9)
-close('最后一行 = 整单 − 前两行之和', third[2].totalPrice, 100 - third[0].totalPrice - third[1].totalPrice, 1e-9)
-// 整单货值为 0 → 占比 0，不得 NaN/Infinity
+// 3. 单行：单价×数量=金额
+const oneRow = allocateItems([{ productName: '单', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 14020.44)
+ok('单行：单价 × 数量 === 金额', oneRow[0].unitPrice * oneRow[0].qty === oneRow[0].totalPrice,
+  `${oneRow[0].unitPrice}×1000=${oneRow[0].totalPrice}`)
+// 4. 手动定价（exact）：Σ 行金额 严格等于手填总价，最后一行兜底
+const manualRows = allocateItems(ITEMS, 100.01, true)
+ok('手动定价：Σ 行金额 === 手填总价（严格相等）', sumItems(manualRows) === 100.01, `Σ=${sumItems(manualRows)}`)
+ok('手动定价：最后一行 = 手填总价 − 前面各行之和',
+  Math.abs(manualRows[manualRows.length - 1].totalPrice - (100.01 - manualRows.slice(0, -1).reduce((s, r) => s + r.totalPrice, 0))) < 1e-9)
+ok('手动定价：前 n-1 行 单价×数量=金额',
+  manualRows.slice(0, -1).every((r) => Math.abs(Math.round(r.unitPrice * r.qty * 100) / 100 - r.totalPrice) < 1e-9))
+// 5. 数量 0 / 货值 0 不出现 NaN
+const zQtyRows = allocateItems(ITEMS.map((it) => ({ ...it, qty: 0 })), 1000, true)
+ok('多行数量 0 → 行单价/行金额有限（无 NaN）', zQtyRows.every((r) => Number.isFinite(r.unitPrice) && Number.isFinite(r.totalPrice)))
 const zeroGoods = allocateItems([{ productName: 'x', qty: 3, price: 0, vatRate: 13, rebateRate: 13 }], 500)
 ok('货值 0 → 行单价/行金额有限（无 NaN）', Number.isFinite(zeroGoods[0].unitPrice) && Number.isFinite(zeroGoods[0].totalPrice))
-close('货值 0、单行 → 金额兜底为整单总价，合计对得上', zeroGoods[0].totalPrice, 500, 1e-9)
+close('货值 0 → 占比 0，行金额为 0', zeroGoods[0].totalPrice, 0, 1e-9)
 eq('空明细 → 空结果', allocateItems([], 100).length, 0)
+
+console.log('\n===== 用例 11：三种金额量级下 单价×数量=金额 均成立 =====')
+for (const t of [0.47, 14.80, 1234.567]) {
+  const T = Math.round(t * 100) / 100
+  const rs = allocateItems(ITEMS, t)
+  ok(`$${t} 多行每行 单价×数量=金额`,
+    rs.every((r) => Math.abs(Math.round(r.unitPrice * r.qty * 100) / 100 - r.totalPrice) < 1e-9),
+    rs.map((r) => `${r.unitPrice}×${r.qty}=${r.totalPrice}`).join(' | '))
+  ok(`$${t} 多行 Σ 行金额 有限`, Number.isFinite(sumItems(rs)), `Σ=${sumItems(rs)}`)
+  const one = allocateItems([{ productName: '单', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], t)
+  ok(`$${t} 单行 单价×数量=金额`, one[0].unitPrice * one[0].qty === one[0].totalPrice,
+    `${one[0].unitPrice}×1000=${one[0].totalPrice}`)
+  const man = allocateItems(ITEMS, t, true)
+  ok(`$${t} 手动 Σ 行金额 === 手填总价（严格）`, sumItems(man) === T, `Σ=${sumItems(man)} 期望=${T}`)
+  ok(`$${t} 手动 前 n-1 行 单价×数量=金额`,
+    man.slice(0, -1).every((r) => Math.abs(Math.round(r.unitPrice * r.qty * 100) / 100 - r.totalPrice) < 1e-9))
+}
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)
