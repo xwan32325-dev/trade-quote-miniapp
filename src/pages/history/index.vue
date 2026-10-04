@@ -21,7 +21,7 @@
         <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
         <view class="muted">运输方式：{{ transportText(item) }}</view>
         <view class="record-summary">
-          <text v-if="itemsOf(item).length <= 1">{{ termOf(item) }} 单价 {{ codeOf(item) }} {{ fmt(item.unitPrice) }}</text>
+          <text v-if="itemsOf(item).length <= 1">{{ termOf(item) }} 单价 {{ codeOf(item) }} {{ fmt(item.unitPrice, unitDecimalsOf(item)) }}</text>
           <text v-else>{{ termOf(item) }} 整单（{{ itemsOf(item).length }} 项）</text>
           <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
         </view>
@@ -34,7 +34,7 @@
         </view>
         <view class="result-line" v-if="itemsOf(item).length <= 1">
           <text class="field-label">{{ termOf(item) }} 单价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.unitPrice) }} / 件</text>
+          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.unitPrice, unitDecimalsOf(item)) }} / 件</text>
         </view>
         <view class="result-line">
           <text class="field-label">{{ termOf(item) }} 整单总价</text>
@@ -44,7 +44,7 @@
         <view class="items" v-if="itemsOf(item).length > 1">
           <view class="item-line" v-for="(row, i) in itemsOf(item)" :key="i">
             <text class="item-name">{{ i + 1 }}. {{ row.productName || '未命名产品' }}</text>
-            <text class="item-calc">{{ fmt(row.qty, 0) }} 件 × {{ codeOf(item) }} {{ fmt(row.unitPrice) }} = {{ codeOf(item) }} {{ fmt(row.totalPrice) }}</text>
+            <text class="item-calc">{{ fmt(row.qty, 0) }} 件 × {{ codeOf(item) }} {{ fmt(row.unitPrice, row.decimals) }} = {{ codeOf(item) }} {{ fmt(row.totalPrice) }}</text>
           </view>
         </view>
         <view class="result-line">
@@ -145,6 +145,13 @@ function costBaseOf(item) {
 // 记录明细：新记录有 items[]；旧记录无（或空）时按空数组处理
 function itemsOf(item) {
   return item && Array.isArray(item.items) ? item.items : []
+}
+
+// 单价展示位数：优先取该行分摊时选定的位数（自适应用），旧记录无此字段则回退 2 位
+function unitDecimalsOf(item) {
+  const rows = itemsOf(item)
+  const d = rows.length ? rows[0].decimals : undefined
+  return Number.isFinite(d) ? d : 2
 }
 
 // 记录标题：多行显示「第一款名 等 N 项」；单行/旧记录直接显示产品名

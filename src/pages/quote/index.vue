@@ -274,7 +274,7 @@
           <text class="it-no">{{ i + 1 }}</text>
           <text class="it-name">{{ row.productName || '未命名产品' }}</text>
           <text class="it-qty">{{ fmt(row.qty, 0) }}</text>
-          <text class="it-price">{{ fmt(row.unitPrice) }}</text>
+          <text class="it-price">{{ fmt(row.unitPrice, row.decimals) }}</text>
           <text class="it-amount">{{ fmt(row.totalPrice) }}</text>
         </view>
         <view class="item-row item-row-total" v-if="allocatedItems.length > 1">
@@ -511,16 +511,18 @@ const allocBasePrice = computed(() => {
   return isMulti.value ? p : p * totalQty.value
 })
 
-// 每行分摊（新口径见 TASK-ROUNDING.md 第一节）：行金额 = round(行单价 × 行数量)，
-// 保证「单价 × 数量 = 金额」；手动定价多行时精确命中手填整单总价（最后一行兜底，单价允许 3 位）
-const allocatedItems = computed(() =>
-  allocateItems(form.items, allocBasePrice.value, manualActive.value && isMulti.value),
-)
+// 每行分摊（口径见 TASK-DECIMALS.md 第一节）：行单价位数按需自适应（2~6 位），
+// 保证「round(单价 × 数量, 2) = 金额」且「Σ 行金额 = 整单总价」（差额补最后一行）
+const allocatedItems = computed(() => allocateItems(form.items, allocBasePrice.value))
 // 整单总价 = Σ 行金额（结果区、合计行、复制、保存、导出统一用这一个数）
 const grandTotal = computed(() => sumItems(allocatedItems.value))
 // 第一行单价（单行报价的单价展示、记录里的 unitPrice）
 const firstUnitPrice = computed(() =>
   allocatedItems.value.length ? allocatedItems.value[0].unitPrice : 0,
+)
+// 第一行单价小数位（单行展示/复制用，与明细表同源）
+const firstUnitDecimals = computed(() =>
+  allocatedItems.value.length ? allocatedItems.value[0].decimals : 2,
 )
 // 换汇成本 / 盈亏率 / 成本加成率：基于 Σ 行金额 反算（与按成本口径的差异只在分位）
 const totalMetrics = computed(() => calcManualTermQuote(calcInput.value, grandTotal.value, true))
@@ -529,7 +531,8 @@ const totalMetrics = computed(() => calcManualTermQuote(calcInput.value, grandTo
 const priceInputText = computed(() => {
   if (manualActive.value) return String(form.manualPrice)
   const auto = isMulti.value ? grandTotal.value : firstUnitPrice.value
-  return safeNumber(auto).toFixed(2)
+  const decimals = isMulti.value ? 2 : firstUnitDecimals.value
+  return safeNumber(auto).toFixed(decimals)
 })
 function onPriceInput(e) {
   form.manualPrice = e.detail.value
@@ -1086,11 +1089,11 @@ function onCopyQuote() {
     // 多产品：逐行列明细，最后给整单总价
     lines.push('明细：')
     allocatedItems.value.forEach((row, i) => {
-      lines.push(`  ${i + 1}. ${row.productName || '未命名产品'} ${fmt(row.qty, 0)} 件 × ${code} ${fmt(row.unitPrice)} = ${code} ${fmt(row.totalPrice)}`)
+      lines.push(`  ${i + 1}. ${row.productName || '未命名产品'} ${fmt(row.qty, 0)} 件 × ${code} ${fmt(row.unitPrice, row.decimals)} = ${code} ${fmt(row.totalPrice)}`)
     })
     lines.push(`${r.tradeTerm} 整单总价：${code} ${fmt(v.totalPrice)}`)
   } else {
-    lines.push(`${r.tradeTerm}：${code} ${fmt(v.unitPrice)}/件（总价 ${code} ${fmt(v.totalPrice)}）`)
+    lines.push(`${r.tradeTerm}：${code} ${fmt(v.unitPrice, firstUnitDecimals.value)}/件（总价 ${code} ${fmt(v.totalPrice)}）`)
   }
   // 手动定价时补一行说明
   if (manualActive.value) {

@@ -99,40 +99,84 @@ function round2(v) {
   return roundN(v, 2)
 }
 
+// 单价最大位数：2 位不够时最多给到 6 位（低价大批量常见 4 位，如 USD 0.4734）
+const MAX_PRICE_DECIMALS = 6
+
 /**
- * 按货值占比把整单总价分摊到各行（口径见 TASK-ROUNDING.md 第一/二节）
- *   行分摊总价 = 整单总价 × 行货值占比（整单货值为 0 时占比为 0，不出现 NaN）
- *   行单价     = round(行分摊总价 ÷ 行数量, 2)        // 数量为 0 时单价为 0
- *   行金额     = round(行单价 × 行数量, 2)            // 保证「单价 × 数量 = 金额」
- * exact=true（手动定价多行）时，把与手填总价的差额补到【最后一行】：
- *   最后一行金额 = 手填总价 − 前面各行金额之和（Σ 行金额 严格等于手填总价）
- *   最后一行单价 = round(最后一行金额 ÷ 数量, 3)      // 允许 3 位用于兜底
+ * 选最小位数 d∈[2,6]，使 round(分摊额 ÷ 数量, d) × 数量 与分摊额相差 ≤ 0.01
+ * （低价大批量按 2 位会明显少算，故位数按需上浮；2~6 位都不满足则取 6）
+ */
+function pickUnitDecimals(amount, qty) {
+  for (let d = 2; d <= MAX_PRICE_DECIMALS; d++) {
+    if (Math.abs(roundN(safeDivide(amount, qty), d) * qty - amount) <= 0.01) return d
+  }
+  return MAX_PRICE_DECIMALS
+}
+
+/**
+ * 由行金额反求单价：取最小位数 d∈[2,6] 使 round(单价 × 数量, 2) === 金额（收尾兜底用）
+ * 数量为 0 → 单价 0；6 位内凑不准时取 6 位（尽力而为）
+ */
+function unitPriceForAmount(amount, qty) {
+  if (!qty) return { unitPrice: 0, decimals: 2 }
+  for (let d = 2; d <= MAX_PRICE_DECIMALS; d++) {
+    const u = roundN(safeDivide(amount, qty), d)
+    if (round2(u * qty) === amount) return { unitPrice: u, decimals: d }
+  }
+  return { unitPrice: roundN(safeDivide(amount, qty), MAX_PRICE_DECIMALS), decimals: MAX_PRICE_DECIMALS }
+}
+
+/**
+ * 按货值占比把整单总价分摊到各行（口径见 TASK-DECIMALS.md 第一节）
+ *   分摊额 = 整单总价 × 行货值占比（整单货值为 0 时占比为 0，全行金额为 0）
+ *   位数 d = 从 2 递增到 6，取首个满足 |round(分摊额 ÷ 数量, d) × 数量 − 分摊额| ≤ 0.01 的 d
+ *   行单价 = round(分摊额 ÷ 数量, d)；行金额 = round(行单价 × 数量, 2)
+ * 收尾：把 round(整单总价 − Σ 行金额, 2) 的差额补到【最后一行】，使 Σ 行金额 严格等于整单总价；
+ *       最后一行单价按其新金额反求（数量为 0 则单价为 0）
  * @param {Array<{productName?:string, qty:number, price?:number, unitPrice?:number, vatRate?:number, rebateRate?:number}>} items
  * @param {number|string} totalPrice 整单总价（外币；手动定价时为用户手填值）
- * @param {boolean} [exact] 是否要求 Σ 行金额 精确等于 totalPrice（手动定价多行传 true）
- * @returns {Array<{productName:string, qty:number, unitPrice:number, totalPrice:number}>}
+ * @returns {Array<{productName:string, qty:number, unitPrice:number, totalPrice:number, decimals:number}>}
  */
-export function allocateItems(items, totalPrice, exact = false) {
+export function allocateItems(items, totalPrice) {
   const list = Array.isArray(items) ? items : []
   const goods = list.map(itemGoodsValue)
   const goodsTotal = goods.reduce((sum, v) => sum + v, 0)
   const total = round2(totalPrice)
-  const last = list.length - 1
-  let allocated = 0
-  return list.map((it, i) => {
+
+  // 整单货值为 0：各行占比一律为 0 → 单价/金额全为 0（不做收尾兜底，避免把总价堆到某行）
+  if (!(goodsTotal > 0)) {
+    return list.map((it) => ({
+      productName: it && it.productName ? String(it.productName) : '',
+      qty: safeNumber(it && it.qty),
+      unitPrice: 0,
+      totalPrice: 0,
+      decimals: 2,
+    }))
+  }
+
+  const rows = list.map((it, i) => {
     const qty = safeNumber(it && it.qty)
     const productName = it && it.productName ? String(it.productName) : ''
-    // 手动定价兜底：最后一行吃掉全部差额，金额严格对上手填总价
-    if (exact && i === last) {
-      const rowTotal = round2(total - allocated)
-      return { productName, qty, unitPrice: roundN(safeDivide(rowTotal, qty), 3), totalPrice: rowTotal }
-    }
-    const share = goodsTotal > 0 ? goods[i] / goodsTotal : 0
-    const unitPrice = round2(safeDivide(total * share, qty))
-    const rowTotal = round2(unitPrice * qty)
-    allocated = round2(allocated + rowTotal)
-    return { productName, qty, unitPrice, totalPrice: rowTotal }
+    const amount = total * (goods[i] / goodsTotal)
+    if (!qty) return { productName, qty, unitPrice: 0, totalPrice: 0, decimals: 2 }
+    const decimals = pickUnitDecimals(amount, qty)
+    const unitPrice = roundN(safeDivide(amount, qty), decimals)
+    return { productName, qty, unitPrice, totalPrice: round2(unitPrice * qty), decimals }
   })
+
+  // 收尾：差额（各行 2 位取整的累计误差）补到最后一行，保证 Σ 行金额 === 整单总价
+  const lastRow = rows[rows.length - 1]
+  if (lastRow) {
+    const diff = round2(total - rows.reduce((s, r) => s + r.totalPrice, 0))
+    if (Math.abs(diff) > 0.001) {
+      const newTotal = round2(lastRow.totalPrice + diff)
+      const { unitPrice, decimals } = unitPriceForAmount(newTotal, lastRow.qty)
+      lastRow.totalPrice = newTotal
+      lastRow.unitPrice = unitPrice
+      lastRow.decimals = decimals
+    }
+  }
+  return rows
 }
 
 /**
