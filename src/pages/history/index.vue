@@ -19,6 +19,7 @@
           <text class="muted">{{ formatTime(item.createdAt) }}</text>
         </view>
         <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
+        <view class="muted">运输方式：{{ transportText(item) }}</view>
         <view class="record-summary">
           <text>{{ codeOf(item) }} 单价 {{ fmt(item.unitPrice) }}</text>
           <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
@@ -35,15 +36,15 @@
           <text class="result-value">¥ {{ fmt(item.result.totalCost) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">FOB 总价</text>
+          <text class="field-label">{{ termsOf(item).base }} 总价</text>
           <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.fobTotal) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">CFR 总价</text>
+          <text class="field-label">{{ termsOf(item).freight }} 总价</text>
           <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cfrTotal) }}</text>
         </view>
         <view class="result-line">
-          <text class="field-label">CIF 总价</text>
+          <text class="field-label">{{ termsOf(item).insured }} 总价</text>
           <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.cifTotal) }}</text>
         </view>
         <view class="result-line">
@@ -75,6 +76,7 @@ import { onShow } from '@dcloudio/uni-app'
 import { getHistory, removeRecord, clearHistory } from '../../utils/storage.js'
 import { formatNumber } from '../../utils/calc.js'
 import { getCurrency } from '../../utils/currency.js'
+import { MULTIMODAL, modeShortName, termNames } from '../../utils/transport.js'
 
 const list = ref([])
 const expandedId = ref('')
@@ -93,6 +95,21 @@ function fmt(v, decimals = 2) {
 // 旧记录没有 currency 字段，按 USD 兜底
 function codeOf(item) {
   return getCurrency(item && item.currency).code
+}
+
+// 运输方式展示：多式联运带组合，其余用简称；旧记录缺字段回退「海运整柜」
+function transportText(item) {
+  const code = item && item.transportMode
+  if (code === MULTIMODAL.code) {
+    const parts = (Array.isArray(item.multimodal) ? item.multimodal : []).map(modeShortName)
+    return parts.length ? `${MULTIMODAL.name}（${parts.join(' + ')}）` : MULTIMODAL.name
+  }
+  return modeShortName(code)
+}
+
+// 贸易术语随运输方式切换：海运类 FOB/CFR/CIF，其余 FCA/CPT/CIP（旧记录按海运兜底）
+function termsOf(item) {
+  return termNames((item && item.transportMode) || 'SEA_FCL')
 }
 
 function formatTime(ts) {
