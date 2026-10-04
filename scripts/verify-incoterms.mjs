@@ -39,10 +39,22 @@ function eq(name, actual, expected) {
   ok(name, actual === expected, `实际=${actual} 期望=${expected}`)
 }
 
+// 国内费用 7 项明细默认值（与报价页一致）：合计 = 500+800+500+200 = 2000，与改动前打包的默认总成本一致
+const FEE_DEFAULTS = {
+  feeCustoms: 500, feeTrucking: 800, feePort: 500, feeDocs: 200,
+  feeBank: 0, feeWarehouse: 0, feeOther: 0,
+}
+const FEE_KEYS = Object.keys(FEE_DEFAULTS)
+const sumFees = (fees) => FEE_KEYS.reduce((s, k) => s + Number(fees[k] || 0), 0)
+const DEFAULT_FEE_TOTAL = sumFees(FEE_DEFAULTS)
+// 页面口径：把 7 项明细累加成单一 domesticFee 再送入计算（calcTermQuote 只认 domesticFee）
+const withFees = (fees, extra = {}) => ({ ...DEFAULTS, ...extra, domesticFee: sumFees(fees) })
+
 // 基线参数（沿用改动前的数值，作为「改动前价格」的基准；destinationFee 固定 800 不随页面默认值变）
+// domesticFee 由 7 项明细累加得到（页面口径），公式与接口不变
 const DEFAULTS = {
-  price: 100, qty: 1000, vatRate: 13, rebateRate: 13, domesticFee: 2000,
-  warehouseFee: 0, exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
+  price: 100, qty: 1000, vatRate: 13, rebateRate: 13, domesticFee: DEFAULT_FEE_TOTAL,
+  exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
   destinationFee: 800, tariffRate: 5, importVatRate: 13,
 }
 
@@ -122,42 +134,58 @@ eq('DDP 计入运费+目的地+税费，不计保险', JSON.stringify(termInclud
 eq('海运判定 SEA_FCL', isSeaMode('SEA_FCL'), true)
 eq('海运判定 MULTIMODAL 为非海运', isSeaMode('MULTIMODAL'), false)
 
-console.log('\n===== 用例 7：仓储费默认 0 → 各术语价格与改动前一致 =====')
-// DEFAULTS 已含 warehouseFee:0；逐个与用例 1 基线（改动前同参数结果）严格相等
+console.log('\n===== 用例 7：默认明细合计 = 2000 → 各术语价格与改动前逐字节一致 =====')
+eq('7 项明细默认合计 = 2000', DEFAULT_FEE_TOTAL, 2000)
+// 改动前硬编码基线（与用例 3 同源）：把 7 项累加当作单一 domesticFee 传入后必须复现
+const LEGACY_TOTALS = {
+  FCA: 14020.44, FOB: 14020.44, EXW: 13710.58, CPT: 14520.44,
+  CIF: 14568.53, DAP: 15320.44, DDP: 18037.47,
+}
 for (const t of INCOTERMS) {
-  const r = calcTermQuote({ ...DEFAULTS, tradeTerm: t.code, warehouseFee: 0 })
-  close(`${t.code} 仓储费=0 → 总价与改动前一致`, r.totalPrice, byTerm[t.code].totalPrice, 1e-9)
-  close(`${t.code} 仓储费=0 → 成本基准与改动前一致`, r.costBase, byTerm[t.code].costBase, 1e-9)
+  const r = calcTermQuote(withFees(FEE_DEFAULTS, { tradeTerm: t.code }))
+  if (LEGACY_TOTALS[t.code] !== undefined) {
+    close(`${t.code} 默认合计 → 复现改动前总价`, r.totalPrice, LEGACY_TOTALS[t.code])
+  }
+  // 与「旧接口：直接传 2000」逐字节比对（浮点严格相等）
+  const bundled = calcTermQuote({ ...DEFAULTS, tradeTerm: t.code })
+  ok(`${t.code} 明细累加 ≡ 旧打包输入（逐字节）`,
+    r.totalPrice === bundled.totalPrice && r.costBase === bundled.costBase && r.unitPrice === bundled.unitPrice,
+    `明细=${r.totalPrice} 打包=${bundled.totalPrice}`)
 }
 
-console.log('\n===== 用例 8：仓储费 = 1200 → 非 EXW 总价增加 1200/汇率，EXW 不变 =====')
+console.log('\n===== 用例 8：改动任一项明细 → 合计与价格同步变化，EXW 仍不含国内费用 =====')
 // 隔离利润率/保险/税费对基准价的放大：置 profitRate=0、保险/关税/增值税率=0，
-// 则各非 EXW 术语总价 = 基准价 + 固定运费/目的地费，基准价增加 = 仓储费/汇率，
+// 则各非 EXW 术语总价 = 基准价 + 固定运费/目的地费，基准价增加 = 明细增量/汇率，
 // 故总价增加恰为 1200 / 汇率（外币）。
 const PURE = {
-  ...DEFAULTS, profitRate: 0, insuranceRate: 0, markupRate: 0,
+  profitRate: 0, insuranceRate: 0, markupRate: 0,
   tariffRate: 0, importVatRate: 0, destinationFee: 0,
 }
-const dForeign = 1200 / DEFAULTS.exchangeRate // ≈169.0141 外币
+const DELTA = 1200
+const dForeign = DELTA / DEFAULTS.exchangeRate // ≈169.0141 外币
+// 只改「拖车费」一项：合计 +1200
+const bumpedFees = { ...FEE_DEFAULTS, feeTrucking: FEE_DEFAULTS.feeTrucking + DELTA }
+eq('改拖车费 +1200 → 明细合计增加 1200', sumFees(bumpedFees) - DEFAULT_FEE_TOTAL, DELTA)
 for (const t of INCOTERMS) {
-  const a = calcTermQuote({ ...PURE, tradeTerm: t.code, warehouseFee: 0 })
-  const b = calcTermQuote({ ...PURE, tradeTerm: t.code, warehouseFee: 1200 })
+  const a = calcTermQuote(withFees(FEE_DEFAULTS, { ...PURE, tradeTerm: t.code }))
+  const b = calcTermQuote(withFees(bumpedFees, { ...PURE, tradeTerm: t.code }))
   if (t.code === 'EXW') {
-    close('EXW 仓储费 1200 → 总价不变', b.totalPrice, a.totalPrice, 1e-9)
-    close('EXW 仓储费 1200 → 成本基准不变', b.costBase, a.costBase, 1e-9)
+    close('EXW 明细 +1200 → 总价不变', b.totalPrice, a.totalPrice, 1e-9)
+    close('EXW 明细 +1200 → 成本基准不变', b.costBase, a.costBase, 1e-9)
+    ok('EXW 不含国内费用合计（includesDomestic=false）', b.includesDomestic === false)
   } else {
-    close(`${t.code} 仓储费 1200 → 总价增加 1200/汇率`, b.totalPrice - a.totalPrice, dForeign, 1e-6)
-    close(`${t.code} 仓储费 1200 → 成本基准增加 1200 ¥`, b.costBase - a.costBase, 1200, 1e-9)
+    close(`${t.code} 明细 +1200 → 总价增加 1200/汇率`, b.totalPrice - a.totalPrice, dForeign, 1e-6)
+    close(`${t.code} 明细 +1200 → 成本基准增加 1200 ¥`, b.costBase - a.costBase, DELTA, 1e-9)
   }
 }
 // 默认参数下（含利润率与保险放大）：EXW 不变，所有非 EXW 术语总价增加
 for (const t of INCOTERMS) {
-  const a = calcTermQuote({ ...DEFAULTS, tradeTerm: t.code, warehouseFee: 0 })
-  const b = calcTermQuote({ ...DEFAULTS, tradeTerm: t.code, warehouseFee: 1200 })
+  const a = calcTermQuote(withFees(FEE_DEFAULTS, { tradeTerm: t.code }))
+  const b = calcTermQuote(withFees(bumpedFees, { tradeTerm: t.code }))
   if (t.code === 'EXW') {
-    ok('默认参数 EXW 仓储费不影响总价', Math.abs(b.totalPrice - a.totalPrice) < 1e-9, `Δ=${b.totalPrice - a.totalPrice}`)
+    ok('默认参数 EXW 明细变化不影响总价', Math.abs(b.totalPrice - a.totalPrice) < 1e-9, `Δ=${b.totalPrice - a.totalPrice}`)
   } else {
-    gt(`默认参数 ${t.code} 仓储费计入 → 总价增加`, b.totalPrice, a.totalPrice)
+    gt(`默认参数 ${t.code} 明细计入 → 总价增加`, b.totalPrice, a.totalPrice)
   }
 }
 

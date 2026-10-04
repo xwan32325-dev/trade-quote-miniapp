@@ -54,15 +54,46 @@
         >{{ v }}%</text>
       </view>
       <view class="field">
-        <text class="field-label">国内费用合计（报关/拖车/单证/银行，不含仓储费）</text>
-        <input class="field-input" type="digit" v-model="form.domesticFee" />
+        <text class="field-label">报关费</text>
+        <input class="field-input" type="digit" v-model="form.feeCustoms" />
         <text class="field-unit">¥</text>
       </view>
       <view class="field">
-        <text class="field-label">仓储费（仓库/装柜，整票）</text>
-        <input class="field-input" type="digit" v-model="form.warehouseFee" />
+        <text class="field-label">拖车费（工厂→港口）</text>
+        <input class="field-input" type="digit" v-model="form.feeTrucking" />
         <text class="field-unit">¥</text>
       </view>
+      <view class="field">
+        <text class="field-label">港杂费（THC/港口操作）</text>
+        <input class="field-input" type="digit" v-model="form.feePort" />
+        <text class="field-unit">¥</text>
+      </view>
+      <view class="field">
+        <text class="field-label">单证费（产地证/商检/认证）</text>
+        <input class="field-input" type="digit" v-model="form.feeDocs" />
+        <text class="field-unit">¥</text>
+      </view>
+      <view class="field">
+        <text class="field-label">银行费用（结汇/信用证）</text>
+        <input class="field-input" type="digit" v-model="form.feeBank" />
+        <text class="field-unit">¥</text>
+      </view>
+      <view class="field">
+        <text class="field-label">仓储费（仓库/装柜）</text>
+        <input class="field-input" type="digit" v-model="form.feeWarehouse" />
+        <text class="field-unit">¥</text>
+      </view>
+      <view class="field">
+        <text class="field-label">其他费用</text>
+        <input class="field-input" type="digit" v-model="form.feeOther" />
+        <text class="field-unit">¥</text>
+      </view>
+      <view class="field">
+        <text class="field-label">国内费用合计</text>
+        <input class="field-input field-input-readonly" :value="fmt(domesticFeeTotal)" disabled />
+        <text class="field-unit">¥</text>
+      </view>
+      <view class="fee-hint">按实际发生额填写；没有的项目填 0</view>
     </view>
 
     <view class="card">
@@ -204,9 +235,9 @@
         <text class="field-label">{{ costBaseLabel }}</text>
         <text class="result-value">¥ {{ fmt(result.costBase) }}</text>
       </view>
-      <view class="result-line" v-if="result.warehouseFee > 0 && counts.domestic">
-        <text class="field-label">仓储费</text>
-        <text class="result-value">¥ {{ fmt(result.warehouseFee) }}</text>
+      <view class="result-line" v-if="counts.domestic">
+        <text class="field-label">国内费用合计</text>
+        <text class="result-value">¥ {{ fmt(domesticFeeTotal) }}</text>
       </view>
       <view class="result-line" v-if="result.includesFreight">
         <text class="field-label">运费</text>
@@ -295,8 +326,15 @@ const form = reactive({
   qty: 1000,
   vatRate: 13,
   rebateRate: 13,
-  domesticFee: 2000,
-  warehouseFee: 0,
+  // 国内费用 7 项明细（整票 ¥）；默认合计 2000（报关 500 + 拖车 800 + 港杂 500 + 单证 200），
+  // 可选项（银行/仓储/其他）默认 0，避免无此支出时凭空多出成本
+  feeCustoms: 500,
+  feeTrucking: 800,
+  feePort: 500,
+  feeDocs: 200,
+  feeBank: 0,
+  feeWarehouse: 0,
+  feeOther: 0,
   currency: 'USD',
   exchangeRate: 7.1,
   profitRate: 10,
@@ -312,14 +350,27 @@ const form = reactive({
   manualUnitPrice: '', // 手动单价（空串 = 按成本计算）
 })
 
-const result = computed(() => calcTermQuote(form))
+// ---- 国内费用：7 项明细累加为合计，再作为单一 domesticFee 送入计算 ----
+const FEE_KEYS = [
+  'feeCustoms',
+  'feeTrucking',
+  'feePort',
+  'feeDocs',
+  'feeBank',
+  'feeWarehouse',
+  'feeOther',
+]
+const domesticFeeTotal = computed(() => FEE_KEYS.reduce((sum, k) => sum + safeNumber(form[k]), 0))
+// 计算输入：在原表单上补一个 domesticFee（7 项合计），公式与外部接口保持不变
+const calcInput = computed(() => ({ ...form, domesticFee: domesticFeeTotal.value }))
+const result = computed(() => calcTermQuote(calcInput.value))
 
 // ---- 手动定价状态机：manualUnitPrice 非空即进入手动定价 ----
 const manualActive = computed(
   () => form.manualUnitPrice !== '' && form.manualUnitPrice !== null && form.manualUnitPrice !== undefined,
 )
 // 手动模式的反算结果（成本加成率 / FOB 净收入口径的换汇成本、盈亏率）
-const manualResult = computed(() => calcManualTermQuote(form, form.manualUnitPrice))
+const manualResult = computed(() => calcManualTermQuote(calcInput.value, form.manualUnitPrice))
 // 单价输入框显示值：手动时显示输入原值，否则显示按成本算出的单价（2 位小数）
 const unitInputText = computed(() =>
   manualActive.value ? String(form.manualUnitPrice) : safeNumber(result.value.unitPrice).toFixed(2),
@@ -423,7 +474,7 @@ const counts = computed(() => ({
 const uncountedText = computed(() => {
   const c = counts.value
   const names = []
-  if (!c.domestic) names.push('国内出口费用、仓储费')
+  if (!c.domestic) names.push('国内费用合计')
   if (!c.freight) names.push('运费')
   if (!c.insurance) names.push('保险费')
   if (!c.destination) names.push('目的地费用')
@@ -467,8 +518,13 @@ const MEMO_KEYS = [
   'qty',
   'vatRate',
   'rebateRate',
-  'domesticFee',
-  'warehouseFee',
+  'feeCustoms',
+  'feeTrucking',
+  'feePort',
+  'feeDocs',
+  'feeBank',
+  'feeWarehouse',
+  'feeOther',
   'currency',
   'profitRate',
   'transportMode',
@@ -611,6 +667,20 @@ onMounted(() => {
     MEMO_KEYS.forEach((k) => {
       if (saved[k] !== undefined && saved[k] !== null) form[k] = saved[k]
     })
+    // 兼容旧记忆：旧结构把国内费用打包成 domesticFee（报关/拖车/单证/银行，本就不含仓储费），
+    // 仓储费另存 warehouseFee。新的 7 项明细都不存在时按此迁移，保证默认合计与旧总成本一致。
+    const hasNewFees = FEE_KEYS.some((k) => saved[k] !== undefined && saved[k] !== null)
+    if (!hasNewFees && (saved.domesticFee !== undefined || saved.warehouseFee !== undefined)) {
+      // 明细从 0 起算，避免叠加表单里 7 项的默认值（否则合计会翻倍）
+      FEE_KEYS.forEach((k) => { form[k] = 0 })
+      if (saved.domesticFee !== undefined && saved.domesticFee !== null) {
+        form.feeOther = safeNumber(saved.domesticFee)
+      }
+      // 仓储费单独落到 feeWarehouse，不并入 feeOther，避免与旧总额重复计算
+      if (saved.warehouseFee !== undefined && saved.warehouseFee !== null) {
+        form.feeWarehouse = safeNumber(saved.warehouseFee)
+      }
+    }
     // 记忆里的币种可能已失效，回退 USD
     form.currency = getCurrency(form.currency).code
     // 记忆里的运输方式/组合可能是旧值，校验后回退
@@ -716,6 +786,24 @@ picker .field {
 .field-picker {
   color: #111827;
   font-size: 28rpx;
+}
+
+/* 国内费用只读合计：输入框样式但灰底不可编辑，与上方可填写的明细项区分 */
+.field-input-readonly {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-radius: 8rpx;
+  padding: 0 12rpx;
+  height: 52rpx;
+  line-height: 52rpx;
+  box-sizing: border-box;
+}
+/* 明细填写提示小字 */
+.fee-hint {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #9ca3af;
+  padding-top: 8rpx;
 }
 
 /* 常用税率 chips */

@@ -36,12 +36,22 @@ function finite(name, actual) {
   ok(name, Number.isFinite(actual), `实际=${actual}`)
 }
 
-// 默认参数（与报价页默认值一致）
+// 国内费用 7 项明细默认值（与报价页一致）：合计 = 2000
+const FEE_DEFAULTS = {
+  feeCustoms: 500, feeTrucking: 800, feePort: 500, feeDocs: 200,
+  feeBank: 0, feeWarehouse: 0, feeOther: 0,
+}
+const FEE_KEYS = Object.keys(FEE_DEFAULTS)
+const sumFees = (fees) => FEE_KEYS.reduce((s, k) => s + Number(fees[k] || 0), 0)
+
+// 默认参数（与报价页默认值一致）；domesticFee 由 7 项明细累加得到
 const D = {
-  price: 100, qty: 1000, vatRate: 13, rebateRate: 13, domesticFee: 2000,
-  warehouseFee: 0, exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
+  price: 100, qty: 1000, vatRate: 13, rebateRate: 13, domesticFee: sumFees(FEE_DEFAULTS),
+  exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
   destinationFee: 800, tariffRate: 5, importVatRate: 13,
 }
+// 页面口径：7 项明细累加成单一 domesticFee 再送入计算（calcManualTermQuote 只认 domesticFee）
+const withFees = (fees, extra = {}) => ({ ...D, ...extra, domesticFee: sumFees(fees) })
 
 console.log('===== 用例 1：11 种术语手动定价均无 NaN/Infinity =====')
 for (const t of INCOTERMS) {
@@ -135,15 +145,16 @@ const zCost = calcManualTermQuote({ ...D, price: 0, domesticFee: 0, qty: 1000, t
 close('零成本时成本加成率返回 0', zCost.markupPct, 0, 1e-9)
 finite('零成本时盈亏率有限', zCost.profitPct)
 
-console.log('\n===== 用例 8：仓储费进手动定价成本基准 =====')
-// 手动定价的成本基准走 calcTermQuote(profitRate=0)，仓储费须一并进入
-const mWh0 = calcManualTermQuote({ ...D, warehouseFee: 0, tradeTerm: 'FOB', profitRate: 0 }, 20)
-const mWh1 = calcManualTermQuote({ ...D, warehouseFee: 1200, tradeTerm: 'FOB', profitRate: 0 }, 20)
-close('FOB 仓储费 → 出口总成本 +1200 ¥', mWh1.exportCost - mWh0.exportCost, 1200, 1e-9)
-close('FOB 仓储费 → 成本基准总价 +1200/汇率', mWh1.costTotal - mWh0.costTotal, 1200 / D.exchangeRate, 1e-9)
-// EXW 不含仓储费，其 FOB 净收入倒推须额外扣减 1200/汇率
-const mWhExw = calcManualTermQuote({ ...D, warehouseFee: 1200, tradeTerm: 'EXW' }, 20)
-close('EXW 仓储费 → 附加费用 = -(国内费用+仓储费)/汇率', mWhExw.extra, -(D.domesticFee + 1200) / D.exchangeRate, 1e-9)
+console.log('\n===== 用例 8：国内费用明细进手动定价成本基准 =====')
+// 手动定价的成本基准走 calcTermQuote(profitRate=0)，7 项明细合计须一并进入
+const bumpedFees = { ...FEE_DEFAULTS, feeTrucking: FEE_DEFAULTS.feeTrucking + 1200 }
+const mD0 = calcManualTermQuote(withFees(FEE_DEFAULTS, { tradeTerm: 'FOB', profitRate: 0 }), 20)
+const mD1 = calcManualTermQuote(withFees(bumpedFees, { tradeTerm: 'FOB', profitRate: 0 }), 20)
+close('FOB 明细 +1200 → 出口总成本 +1200 ¥', mD1.exportCost - mD0.exportCost, 1200, 1e-9)
+close('FOB 明细 +1200 → 成本基准总价 +1200/汇率', mD1.costTotal - mD0.costTotal, 1200 / D.exchangeRate, 1e-9)
+// EXW 不含国内费用合计，其 FOB 净收入倒推须把 1200 的明细增量加回
+const mDExw = calcManualTermQuote(withFees(bumpedFees, { tradeTerm: 'EXW' }), 20)
+close('EXW 明细 +1200 → 附加费用 = -(明细合计)/汇率', mDExw.extra, -(sumFees(bumpedFees)) / D.exchangeRate, 1e-9)
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

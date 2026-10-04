@@ -120,8 +120,7 @@ export function calcTermQuote(input = {}) {
   const qty = safeNumber(input.qty) // 数量
   const vatRate = safeNumber(input.vatRate) // 增值税率 %
   const rebateRate = safeNumber(input.rebateRate) // 退税率 %
-  const domesticFee = safeNumber(input.domesticFee) // 国内费用 ¥ 整票
-  const warehouseFee = safeNumber(input.warehouseFee) // 仓储费 ¥ 整票
+  const domesticFee = safeNumber(input.domesticFee) // 国内费用合计 ¥ 整票（由页面把 7 项明细累加后传入）
   const exchangeRate = safeNumber(input.exchangeRate) // 汇率 1 外币 = ? ¥
   const profitRate = safeNumber(input.profitRate) // 利润率 %
   const freight = safeNumber(input.freight) // 运费 外币整票
@@ -139,8 +138,8 @@ export function calcTermQuote(input = {}) {
   const refundTotal = refundPerUnit * qty
   // 货值成本¥ = (采购含税价 - 退税额/件) × 数量      ← EXW 基数
   const goodsValue = (price - refundPerUnit) * qty
-  // 含国内成本¥ = 货值成本¥ + 国内费用 + 仓储费       ← 其余术语基数（EXW 不含）
-  const withDomestic = goodsValue + domesticFee + warehouseFee
+  // 含国内成本¥ = 货值成本¥ + 国内费用合计            ← 其余术语基数（EXW 不含）
+  const withDomestic = goodsValue + domesticFee
   // 基准价$：EXW 用货值成本，其余用含国内成本
   const costBase = term === 'EXW' ? goodsValue : withDomestic
   const basePrice = safeDivide(costBase, exchangeRate) * (1 + profitRate / 100)
@@ -172,7 +171,7 @@ export function calcTermQuote(input = {}) {
 
   const result = {
     tradeTerm: term,
-    price, qty, vatRate, rebateRate, domesticFee, warehouseFee, exchangeRate,
+    price, qty, vatRate, rebateRate, domesticFee, exchangeRate,
     profitRate, freight, insuranceRate, markupRate,
     destinationFee, tariffRate, importVatRate,
     refundPerUnit, refundTotal, goodsValue, withDomestic, costBase,
@@ -183,7 +182,7 @@ export function calcTermQuote(input = {}) {
     includesInsurance: inc.insurance,
     includesDestination: inc.destination,
     includesDuty: inc.duty,
-    // EXW 不含国内出口费用与仓储费，其余术语都含
+    // EXW 不含国内费用合计，其余术语都含
     includesDomestic: term !== 'EXW',
   }
   const out = sanitizeNumbers(result)
@@ -198,7 +197,7 @@ export function calcTermQuote(input = {}) {
  * 手填单价 U 后：先求成本基准（利润率置 0 的 calcTermQuote 单价 U0$）得 C$ = U0$ × Q，
  * 再反算利润额与成本加成率；最后按术语扣掉相对 FOB 的附加费用得到 FOB 净收入，
  * 算换汇成本与盈亏率。不改动 calcTermQuote，只额外以「利润率置 0」调用一次。
- * @param {object} input 与 calcTermQuote 相同（含 tradeTerm / qty / exchangeRate / domesticFee 等）
+ * @param {object} input 与 calcTermQuote 相同（含 tradeTerm / qty / exchangeRate / domesticFee 等，domesticFee 为 7 项明细合计）
  * @param {number|string} manualUnitPrice 手动单价 U（外币/件）
  * @returns 反算指标；所有数值字段保证有限（无 NaN / Infinity）
  */
@@ -208,7 +207,6 @@ export function calcManualTermQuote(input = {}, manualUnitPrice) {
   const insuranceRate = safeNumber(input.insuranceRate)
   const markupRate = safeNumber(input.markupRate)
   const domesticFee = safeNumber(input.domesticFee)
-  const warehouseFee = safeNumber(input.warehouseFee)
   const term = String(input.tradeTerm || input.term || 'FOB').toUpperCase()
 
   // 成本基准：利润率临时置 0，同口径算出该术语单价 U0$ 与总价 C$
@@ -224,13 +222,13 @@ export function calcManualTermQuote(input = {}, manualUnitPrice) {
   // 保险费仍按现有公式，基数换成手动总价：保险$ = T$ × I/100 × (1+M/100)
   const insurance = manualTotal * (insuranceRate / 100) * (1 + markupRate / 100)
 
-  // 该术语相对 FOB 多出来的附加费用（EXW 为负：不含国内费用与仓储费，倒推 FOB 要加回）
+  // 该术语相对 FOB 多出来的附加费用（EXW 为负：不含国内费用合计，倒推 FOB 要加回）
   let extra = 0
   if (term === 'CFR' || term === 'CPT') extra = cost.freight
   else if (term === 'CIF' || term === 'CIP') extra = cost.freight + insurance
   else if (term === 'DAP' || term === 'DPU') extra = cost.freight + cost.destinationFee
   else if (term === 'DDP') extra = cost.freight + cost.destinationFee + cost.tariff + cost.importVat
-  else if (term === 'EXW') extra = -safeDivide(domesticFee + warehouseFee, exchangeRate)
+  else if (term === 'EXW') extra = -safeDivide(domesticFee, exchangeRate)
   // FAS / FOB / FCA → 0
 
   const fobNet = manualTotal - extra
