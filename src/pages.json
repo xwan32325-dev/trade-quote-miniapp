@@ -3,33 +3,45 @@
 		{
 			"path": "pages/quote/index",
 			"style": {
-				"navigationBarTitleText": "报价计算"
+				"navigationBarTitleText": "报价计算",
+				"usingComponents": {}
 			}
 		},
 		{
 			"path": "pages/loading/index",
 			"style": {
-				"navigationBarTitleText": "装柜计算"
+				"navigationBarTitleText": "装柜计算",
+				"usingComponents": {}
 			}
 		},
 		{
 			"path": "pages/ai/index",
 			"style": {
-				"navigationBarTitleText": "AI 邮件"
+				"navigationBarTitleText": "AI 邮件",
+				"usingComponents": {}
 			}
 		},
 		{
 			"path": "pages/history/index",
 			"style": {
-				"navigationBarTitleText": "我的记录"
+				"navigationBarTitleText": "我的记录",
+				"usingComponents": {}
 			}
 		}
 	],
 	"tabBar": {
+		// 微信小程序原生 tabBar 的字体大小写死为 10px，fontSize 不生效，
+		// 因此小程序端改用官方「自定义 tabBar」（src/custom-tab-bar/index.vue）实现大字号；
+		// H5 端保持原生 tabBar（H5 支持 fontSize，无需自定义组件）。
+		// #ifdef MP-WEIXIN
+		"custom": true,
+		// #endif
 		"color": "#6b7280",
 		"selectedColor": "#2563eb",
 		"backgroundColor": "#ffffff",
 		"borderStyle": "black",
+		"height": "56px",
+		"fontSize": "18px",
 		"list": [
 			{
 				"pagePath": "pages/quote/index",

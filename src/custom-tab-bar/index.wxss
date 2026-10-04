@@ -1,0 +1,46 @@
+/* 自定义 tabBar 样式：纯文字、大字号、选中加粗高亮、底部适配安全区 */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+  display: flex;
+  align-items: stretch;
+  height: 110rpx;
+  background-color: #ffffff;
+  border-top: 1rpx solid #e5e7eb;
+  padding-bottom: constant(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tabbar-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.tabbar-text {
+  font-size: 34rpx;
+  line-height: 1.2;
+  color: #6b7280;
+  letter-spacing: 1rpx;
+}
+
+.tabbar-item.active .tabbar-text {
+  color: #2563eb;
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.tabbar-underline {
+  position: absolute;
+  bottom: 10rpx;
+  width: 44rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background-color: #2563eb;
+}
