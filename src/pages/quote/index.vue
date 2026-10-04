@@ -125,6 +125,12 @@
         <view class="multi-summary">已选组合：{{ multiText || '—' }}</view>
         <view class="multi-warn" v-if="form.multimodal.length < 2">⚠️ 多式联运至少选 2 种</view>
       </template>
+      <picker mode="selector" :range="termRange" :value="termIndex" @change="onTermChange">
+        <view class="field">
+          <text class="field-label">贸易术语</text>
+          <text class="field-picker">{{ termLabelText }} ›</text>
+        </view>
+      </picker>
     </view>
 
     <view class="card">
@@ -150,30 +156,18 @@
     <view class="card">
       <view class="card-title">报价结果</view>
       <view class="result-line">
-        <text class="field-label">{{ terms.base }} 单价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.fobUnit) }} / 件</text>
+        <text class="field-label">贸易术语</text>
+        <text class="result-value term-head">{{ termLabelText }}</text>
       </view>
-      <view class="result-line">
-        <text class="field-label">{{ terms.base }} 总价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.fobTotal) }}</text>
+      <view class="result-line result-main">
+        <text class="field-label">{{ form.tradeTerm }} 单价</text>
+        <text class="result-value">{{ symbol }} {{ fmt(selected.unit) }} / 件</text>
       </view>
-      <view class="result-line">
-        <text class="field-label">{{ terms.freight }} 单价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(div(result.cfrTotal, result.qty)) }} / 件</text>
+      <view class="result-line result-main">
+        <text class="field-label">{{ form.tradeTerm }} 总价</text>
+        <text class="result-value">{{ symbol }} {{ fmt(selected.total) }}</text>
       </view>
-      <view class="result-line">
-        <text class="field-label">{{ terms.freight }} 总价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.cfrTotal) }}</text>
-      </view>
-      <view class="result-line">
-        <text class="field-label">{{ terms.insured }} 单价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(div(result.cifTotal, result.qty)) }} / 件</text>
-      </view>
-      <view class="result-line">
-        <text class="field-label">{{ terms.insured }} 总价</text>
-        <text class="result-value">{{ symbol }} {{ fmt(result.cifTotal) }}</text>
-      </view>
-      <view class="result-line">
+      <view class="result-line" v-if="isInsuredTerm">
         <text class="field-label">保险费</text>
         <text class="result-value">{{ symbol }} {{ fmt(result.insurance) }}</text>
       </view>
@@ -199,6 +193,9 @@
           {{ fmt(result.profitPct, 2) }}%
         </text>
       </view>
+      <view class="ins-note" v-if="!isInsuredTerm">
+        保险费 {{ symbol }} {{ fmt(result.insurance) }}（未计入所选术语报价）
+      </view>
     </view>
 
     <view class="card">
@@ -222,7 +219,9 @@ import {
   MULTIMODAL,
   getMode,
   isSeaMode,
-  termNames,
+  termOptions,
+  mapTermLevel,
+  termByLevel,
   freightLabel,
   modeShortName,
 } from '../../utils/transport.js'
@@ -241,6 +240,7 @@ const form = reactive({
   profitRate: 10,
   transportMode: TRANSPORT_MODES[0].code,
   multimodal: [],
+  tradeTerm: 'FOB',
   freight: 500,
   insuranceRate: 0.3,
   markupRate: 10,
@@ -270,15 +270,43 @@ const transportIndex = computed(() => {
 const transportLabel = computed(() => getMode(form.transportMode).name)
 const isMultimodal = computed(() => form.transportMode === MULTIMODAL.code)
 const isSea = computed(() => isSeaMode(form.transportMode))
-// 贸易术语随运输方式切换：海运类 FOB/CFR/CIF，其余 FCA/CPT/CIP
-const terms = computed(() => termNames(form.transportMode))
 const freightLabelText = computed(() => freightLabel(form.transportMode))
 // 多式联运已选组合（简称拼接，如「海运整柜 + 铁路运输」）
 const multiText = computed(() => form.multimodal.map(modeShortName).join(' + '))
 
+// ---- 贸易术语：可选列表 + 当前项 ----
+const termList = computed(() => termOptions(form.transportMode))
+const termRange = computed(() => termList.value.map((t) => t.name))
+const termIndex = computed(() => {
+  const i = termList.value.findIndex((t) => t.code === form.tradeTerm)
+  return i === -1 ? 0 : i
+})
+const termLabelText = computed(() => {
+  const hit = termList.value.find((t) => t.code === form.tradeTerm)
+  return hit ? hit.name : form.tradeTerm
+})
+// 所选术语层级与对应单价/总价（三个价格仍全算，仅展示所选那个）
+const termLevel = computed(() => mapTermLevel(form.tradeTerm))
+const isInsuredTerm = computed(() => termLevel.value === 'insured')
+const selected = computed(() => {
+  const r = result.value
+  if (termLevel.value === 'freight') return { unit: div(r.cfrTotal, r.qty), total: r.cfrTotal }
+  if (termLevel.value === 'insured') return { unit: div(r.cifTotal, r.qty), total: r.cifTotal }
+  return { unit: r.fobUnit, total: r.fobTotal }
+})
+
+// 切换运输方式：贸易术语按层级跟随（FOB↔FCA / CFR↔CPT / CIF↔CIP）
 function onTransportChange(e) {
   const picked = MODE_OPTIONS[Number(e.detail.value)]
-  if (picked) form.transportMode = picked.code
+  if (!picked) return
+  const level = mapTermLevel(form.tradeTerm)
+  form.transportMode = picked.code
+  form.tradeTerm = termByLevel(picked.code, level)
+}
+
+function onTermChange(e) {
+  const picked = termList.value[Number(e.detail.value)]
+  if (picked) form.tradeTerm = picked.code
 }
 
 function isMultiActive(code) {
@@ -302,6 +330,7 @@ const MEMO_KEYS = [
   'profitRate',
   'transportMode',
   'multimodal',
+  'tradeTerm',
   'freight',
   'insuranceRate',
   'markupRate',
@@ -451,6 +480,10 @@ onMounted(() => {
     form.multimodal = Array.isArray(form.multimodal)
       ? form.multimodal.filter((c) => TRANSPORT_MODES.some((m) => m.code === c))
       : []
+    // 记忆里的术语可能不属于当前运输方式（或旧记忆没有该字段），回退该方式首个术语
+    if (!termOptions(form.transportMode).some((t) => t.code === form.tradeTerm)) {
+      form.tradeTerm = termOptions(form.transportMode)[0].code
+    }
   }
   fetchFx()
 })
@@ -470,9 +503,10 @@ function onSave() {
     currency: form.currency,
     transportMode: form.transportMode,
     multimodal: isMultimodal.value ? [...form.multimodal] : [],
-    term: terms.value.base,
-    unitPrice: r.fobUnit,
-    totalPrice: r.fobTotal,
+    tradeTerm: form.tradeTerm,
+    term: form.tradeTerm,
+    unitPrice: selected.value.unit,
+    totalPrice: selected.value.total,
     createdAt: Date.now(),
     input: { ...form },
     result: { ...r },
@@ -490,20 +524,18 @@ function onCopyQuote() {
 
   const r = result.value
   const code = form.currency
-  const t = terms.value
   const productName = form.productName || '未命名产品'
   const customerName = form.customerName || '未填写客户'
   const transportText = isMultimodal.value
     ? `${MULTIMODAL.name}（${multiText.value || '未选择组合'}）`
     : transportLabel.value
-  // 外贸单据统一用币种代码，避免 ¥ / $ 符号歧义
+  // 外贸单据统一用币种代码，避免 ¥ / $ 符号歧义；只输出所选贸易术语那一行
   const text = [
     `【报价单】${productName} - ${customerName}`,
     `币种：${code}`,
     `运输方式：${transportText}`,
-    `${t.base} 上海：${code} ${fmt(r.fobUnit)}/件（总价 ${code} ${fmt(r.fobTotal)}）`,
-    `${t.freight}：${code} ${fmt(div(r.cfrTotal, r.qty))}/件（总价 ${code} ${fmt(r.cfrTotal)}）`,
-    `${t.insured}：${code} ${fmt(div(r.cifTotal, r.qty))}/件（总价 ${code} ${fmt(r.cifTotal)}）`,
+    `贸易术语：${form.tradeTerm}`,
+    `${form.tradeTerm}：${code} ${fmt(selected.value.unit)}/件（总价 ${code} ${fmt(selected.value.total)}）`,
     `数量：${fmt(r.qty, 0)} 件 | 汇率：1 ${code} = ${rateText.value} ¥ | 盈亏率：${fmt(r.profitPct, 2)}%`,
     '有效期：30 天',
   ].join('\n')
@@ -562,6 +594,23 @@ picker .field {
   line-height: 1.5;
   color: #d97706;
   padding-bottom: 8rpx;
+}
+
+/* 报价结果：所选术语的单价/总价突出显示 */
+.result-main .result-value {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #111827;
+}
+.term-head {
+  color: #111827;
+}
+/* 非 CIF/CIP 时，保险费未计入报价的灰色小字 */
+.ins-note {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #9ca3af;
+  padding-top: 12rpx;
 }
 
 /* 非海运方式的 Incoterms 小字提示 */
