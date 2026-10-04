@@ -39,7 +39,7 @@ function finite(name, actual) {
 // 默认参数（与报价页默认值一致）
 const D = {
   price: 100, qty: 1000, vatRate: 13, rebateRate: 13, domesticFee: 2000,
-  exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
+  warehouseFee: 0, exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
   destinationFee: 800, tariffRate: 5, importVatRate: 13,
 }
 
@@ -134,6 +134,16 @@ finite('汇率 0 盈亏率有限', zRate.profitPct)
 const zCost = calcManualTermQuote({ ...D, price: 0, domesticFee: 0, qty: 1000, tradeTerm: 'FOB' }, 5)
 close('零成本时成本加成率返回 0', zCost.markupPct, 0, 1e-9)
 finite('零成本时盈亏率有限', zCost.profitPct)
+
+console.log('\n===== 用例 8：仓储费进手动定价成本基准 =====')
+// 手动定价的成本基准走 calcTermQuote(profitRate=0)，仓储费须一并进入
+const mWh0 = calcManualTermQuote({ ...D, warehouseFee: 0, tradeTerm: 'FOB', profitRate: 0 }, 20)
+const mWh1 = calcManualTermQuote({ ...D, warehouseFee: 1200, tradeTerm: 'FOB', profitRate: 0 }, 20)
+close('FOB 仓储费 → 出口总成本 +1200 ¥', mWh1.exportCost - mWh0.exportCost, 1200, 1e-9)
+close('FOB 仓储费 → 成本基准总价 +1200/汇率', mWh1.costTotal - mWh0.costTotal, 1200 / D.exchangeRate, 1e-9)
+// EXW 不含仓储费，其 FOB 净收入倒推须额外扣减 1200/汇率
+const mWhExw = calcManualTermQuote({ ...D, warehouseFee: 1200, tradeTerm: 'EXW' }, 20)
+close('EXW 仓储费 → 附加费用 = -(国内费用+仓储费)/汇率', mWhExw.extra, -(D.domesticFee + 1200) / D.exchangeRate, 1e-9)
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

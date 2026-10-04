@@ -39,10 +39,10 @@ function eq(name, actual, expected) {
   ok(name, actual === expected, `实际=${actual} 期望=${expected}`)
 }
 
-// 默认参数（与报价页默认值一致）
+// 基线参数（沿用改动前的数值，作为「改动前价格」的基准；destinationFee 固定 800 不随页面默认值变）
 const DEFAULTS = {
   price: 100, qty: 1000, vatRate: 13, rebateRate: 13, domesticFee: 2000,
-  exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
+  warehouseFee: 0, exchangeRate: 7.1, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10,
   destinationFee: 800, tariffRate: 5, importVatRate: 13,
 }
 
@@ -121,6 +121,45 @@ eq('FOB 四项全不计入', JSON.stringify(termIncludes('FOB')), JSON.stringify
 eq('DDP 计入运费+目的地+税费，不计保险', JSON.stringify(termIncludes('DDP')), JSON.stringify({ carriage: true, insurance: false, destination: true, duty: true }))
 eq('海运判定 SEA_FCL', isSeaMode('SEA_FCL'), true)
 eq('海运判定 MULTIMODAL 为非海运', isSeaMode('MULTIMODAL'), false)
+
+console.log('\n===== 用例 7：仓储费默认 0 → 各术语价格与改动前一致 =====')
+// DEFAULTS 已含 warehouseFee:0；逐个与用例 1 基线（改动前同参数结果）严格相等
+for (const t of INCOTERMS) {
+  const r = calcTermQuote({ ...DEFAULTS, tradeTerm: t.code, warehouseFee: 0 })
+  close(`${t.code} 仓储费=0 → 总价与改动前一致`, r.totalPrice, byTerm[t.code].totalPrice, 1e-9)
+  close(`${t.code} 仓储费=0 → 成本基准与改动前一致`, r.costBase, byTerm[t.code].costBase, 1e-9)
+}
+
+console.log('\n===== 用例 8：仓储费 = 1200 → 非 EXW 总价增加 1200/汇率，EXW 不变 =====')
+// 隔离利润率/保险/税费对基准价的放大：置 profitRate=0、保险/关税/增值税率=0，
+// 则各非 EXW 术语总价 = 基准价 + 固定运费/目的地费，基准价增加 = 仓储费/汇率，
+// 故总价增加恰为 1200 / 汇率（外币）。
+const PURE = {
+  ...DEFAULTS, profitRate: 0, insuranceRate: 0, markupRate: 0,
+  tariffRate: 0, importVatRate: 0, destinationFee: 0,
+}
+const dForeign = 1200 / DEFAULTS.exchangeRate // ≈169.0141 外币
+for (const t of INCOTERMS) {
+  const a = calcTermQuote({ ...PURE, tradeTerm: t.code, warehouseFee: 0 })
+  const b = calcTermQuote({ ...PURE, tradeTerm: t.code, warehouseFee: 1200 })
+  if (t.code === 'EXW') {
+    close('EXW 仓储费 1200 → 总价不变', b.totalPrice, a.totalPrice, 1e-9)
+    close('EXW 仓储费 1200 → 成本基准不变', b.costBase, a.costBase, 1e-9)
+  } else {
+    close(`${t.code} 仓储费 1200 → 总价增加 1200/汇率`, b.totalPrice - a.totalPrice, dForeign, 1e-6)
+    close(`${t.code} 仓储费 1200 → 成本基准增加 1200 ¥`, b.costBase - a.costBase, 1200, 1e-9)
+  }
+}
+// 默认参数下（含利润率与保险放大）：EXW 不变，所有非 EXW 术语总价增加
+for (const t of INCOTERMS) {
+  const a = calcTermQuote({ ...DEFAULTS, tradeTerm: t.code, warehouseFee: 0 })
+  const b = calcTermQuote({ ...DEFAULTS, tradeTerm: t.code, warehouseFee: 1200 })
+  if (t.code === 'EXW') {
+    ok('默认参数 EXW 仓储费不影响总价', Math.abs(b.totalPrice - a.totalPrice) < 1e-9, `Δ=${b.totalPrice - a.totalPrice}`)
+  } else {
+    gt(`默认参数 ${t.code} 仓储费计入 → 总价增加`, b.totalPrice, a.totalPrice)
+  }
+}
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

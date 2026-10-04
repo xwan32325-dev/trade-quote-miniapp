@@ -54,8 +54,13 @@
         >{{ v }}%</text>
       </view>
       <view class="field">
-        <text class="field-label">国内费用合计</text>
+        <text class="field-label">国内费用合计（报关/拖车/单证/银行，不含仓储费）</text>
         <input class="field-input" type="digit" v-model="form.domesticFee" />
+        <text class="field-unit">¥</text>
+      </view>
+      <view class="field">
+        <text class="field-label">仓储费（仓库/装柜，整票）</text>
+        <input class="field-input" type="digit" v-model="form.warehouseFee" />
         <text class="field-unit">¥</text>
       </view>
     </view>
@@ -199,6 +204,10 @@
         <text class="field-label">{{ costBaseLabel }}</text>
         <text class="result-value">¥ {{ fmt(result.costBase) }}</text>
       </view>
+      <view class="result-line" v-if="result.warehouseFee > 0">
+        <text class="field-label">仓储费</text>
+        <text class="result-value">¥ {{ fmt(result.warehouseFee) }}</text>
+      </view>
       <view class="result-line" v-if="result.includesFreight">
         <text class="field-label">运费</text>
         <text class="result-value">{{ symbol }} {{ fmt(view.freight) }}</text>
@@ -287,6 +296,7 @@ const form = reactive({
   vatRate: 13,
   rebateRate: 13,
   domesticFee: 2000,
+  warehouseFee: 0,
   currency: 'USD',
   exchangeRate: 7.1,
   profitRate: 10,
@@ -296,7 +306,7 @@ const form = reactive({
   freight: 500,
   insuranceRate: 0.3,
   markupRate: 10,
-  destinationFee: 800,
+  destinationFee: 0,
   tariffRate: 5,
   importVatRate: 13,
   manualUnitPrice: '', // 手动单价（空串 = 按成本计算）
@@ -456,6 +466,7 @@ const MEMO_KEYS = [
   'vatRate',
   'rebateRate',
   'domesticFee',
+  'warehouseFee',
   'currency',
   'profitRate',
   'transportMode',
