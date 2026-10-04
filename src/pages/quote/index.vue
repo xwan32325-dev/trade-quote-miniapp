@@ -511,9 +511,11 @@ const allocBasePrice = computed(() => {
   return isMulti.value ? p : p * totalQty.value
 })
 
-// 每行分摊（口径见 TASK-DECIMALS.md 第一节）：行单价位数按需自适应（2~6 位），
-// 保证「round(单价 × 数量, 2) = 金额」且「Σ 行金额 = 整单总价」（差额补最后一行）
-const allocatedItems = computed(() => allocateItems(form.items, allocBasePrice.value))
+// 每行分摊（口径见 TASK-PRICE2.md）：行单价默认 2 位，偏差超 0.1% 才升位（3~6 位）。
+// 自动模式整单总价 = Σ 行金额（不兜底）；手动模式差额补最后一行，Σ 严格等于手填总价
+const allocatedItems = computed(() =>
+  allocateItems(form.items, allocBasePrice.value, manualActive.value),
+)
 // 整单总价 = Σ 行金额（结果区、合计行、复制、保存、导出统一用这一个数）
 const grandTotal = computed(() => sumItems(allocatedItems.value))
 // 第一行单价（单行报价的单价展示、记录里的 unitPrice）

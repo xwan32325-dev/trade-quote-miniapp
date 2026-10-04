@@ -101,13 +101,21 @@ function round2(v) {
 
 // 单价最大位数：2 位不够时最多给到 6 位（低价大批量常见 4 位，如 USD 0.4734）
 const MAX_PRICE_DECIMALS = 6
+// 2 位小数的相对容差：分摊额的 0.1%（2 位四舍五入的常规报价偏差，多数向上取整，对卖方有利）
+const PRICE_REL_TOLERANCE = 0.001
 
 /**
- * 选最小位数 d∈[2,6]，使 round(分摊额 ÷ 数量, d) × 数量 与分摊额相差 ≤ 0.01
- * （低价大批量按 2 位会明显少算，故位数按需上浮；2~6 位都不满足则取 6）
+ * 选单价位数 d∈[2,6]：
+ *   先试 2 位——|round(分摊额 ÷ 数量, 2) × 数量 − 分摊额| ≤ max(0.01, 分摊额 × 0.1%) 则用 2 位
+ *     （常规外贸报价单价写 2 位，±0.1% 内偏差属正常，不必为凑准升位）
+ *   否则 d 从 3 递增到 6，取首个满足 |round(分摊额 ÷ 数量, d) × 数量 − 分摊额| ≤ 0.01 的 d
+ *   2~6 位都不满足则取 6
  */
 function pickUnitDecimals(amount, qty) {
-  for (let d = 2; d <= MAX_PRICE_DECIMALS; d++) {
+  const tol2 = Math.max(0.01, Math.abs(safeNumber(amount)) * PRICE_REL_TOLERANCE)
+  const u2 = roundN(safeDivide(amount, qty), 2)
+  if (Math.abs(round2(u2 * qty) - safeNumber(amount)) <= tol2) return 2
+  for (let d = 3; d <= MAX_PRICE_DECIMALS; d++) {
     if (Math.abs(roundN(safeDivide(amount, qty), d) * qty - amount) <= 0.01) return d
   }
   return MAX_PRICE_DECIMALS
@@ -127,17 +135,20 @@ function unitPriceForAmount(amount, qty) {
 }
 
 /**
- * 按货值占比把整单总价分摊到各行（口径见 TASK-DECIMALS.md 第一节）
+ * 按货值占比把整单总价分摊到各行（口径见 TASK-DECIMALS.md / TASK-PRICE2.md）
  *   分摊额 = 整单总价 × 行货值占比（整单货值为 0 时占比为 0，全行金额为 0）
- *   位数 d = 从 2 递增到 6，取首个满足 |round(分摊额 ÷ 数量, d) × 数量 − 分摊额| ≤ 0.01 的 d
+ *   位数 d 由 pickUnitDecimals 选（先试 2 位，偏差超 0.1% 才升位到 3~6）
  *   行单价 = round(分摊额 ÷ 数量, d)；行金额 = round(行单价 × 数量, 2)
- * 收尾：把 round(整单总价 − Σ 行金额, 2) 的差额补到【最后一行】，使 Σ 行金额 严格等于整单总价；
- *       最后一行单价按其新金额反求（数量为 0 则单价为 0）
+ * 收尾：
+ *   手动模式（manual=true）：把 round(整单总价 − Σ 行金额, 2) 的差额补到【最后一行】，
+ *                             使 Σ 行金额 严格等于用户手填的整单总价
+ *   自动模式（manual=false）：不做兜底——整单总价以 Σ 行金额 为准（避免把最后一行单价搞成怪数）
  * @param {Array<{productName?:string, qty:number, price?:number, unitPrice?:number, vatRate?:number, rebateRate?:number}>} items
  * @param {number|string} totalPrice 整单总价（外币；手动定价时为用户手填值）
+ * @param {boolean} [manual=false] 是否手动定价模式（true 时保留最后一行兜底）
  * @returns {Array<{productName:string, qty:number, unitPrice:number, totalPrice:number, decimals:number}>}
  */
-export function allocateItems(items, totalPrice) {
+export function allocateItems(items, totalPrice, manual = false) {
   const list = Array.isArray(items) ? items : []
   const goods = list.map(itemGoodsValue)
   const goodsTotal = goods.reduce((sum, v) => sum + v, 0)
@@ -164,9 +175,9 @@ export function allocateItems(items, totalPrice) {
     return { productName, qty, unitPrice, totalPrice: round2(unitPrice * qty), decimals }
   })
 
-  // 收尾：差额（各行 2 位取整的累计误差）补到最后一行，保证 Σ 行金额 === 整单总价
+  // 收尾兜底：仅手动模式保留（自动模式的整单总价 = Σ 行金额，不调整任何一行）
   const lastRow = rows[rows.length - 1]
-  if (lastRow) {
+  if (manual && lastRow) {
     const diff = round2(total - rows.reduce((s, r) => s + r.totalPrice, 0))
     if (Math.abs(diff) > 0.001) {
       const newTotal = round2(lastRow.totalPrice + diff)

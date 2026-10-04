@@ -181,12 +181,12 @@ close('整单手动价=成本基准总价 → 成本加成率 0', calcManualTerm
 const z = calcManualTermQuote({ ...D, items: ITEMS.map((it) => ({ ...it, qty: 0 })), tradeTerm: 'DDP' }, 100, true)
 ok('多行数量 0 → 手动反算全部有限', Object.keys(z).every((k) => typeof z[k] !== 'number' || Number.isFinite(z[k])))
 
-console.log('\n===== 用例 10：手动定价分摊 —— Σ 行金额 精确等于手填总价（新口径）=====')
+console.log('\n===== 用例 10：手动定价分摊 —— Σ 行金额 精确等于手填总价（保留兜底）=====')
 // 用户手填「整单总价」时，分摊后必须严格对上：行金额 = round(行单价×行数量)，最后一行兜底
 const round2 = (v) => Math.round(v * 100) / 100
 for (const t of [0.47, 14.80, 1234.567, 5000]) {
   const T = Math.round(t * 100) / 100
-  const rows = allocateItems(ITEMS, t)
+  const rows = allocateItems(ITEMS, t, true)
   ok(`手填 $${t} → Σ 行金额 === 手填总价（严格相等）`, sumItems(rows) === T, `Σ=${sumItems(rows)} 期望=${T}`)
   ok(`手填 $${t} → 每行金额/单价有限（无 NaN）`,
     rows.every((r) => Number.isFinite(r.unitPrice) && Number.isFinite(r.totalPrice)))
@@ -196,14 +196,37 @@ for (const t of [0.47, 14.80, 1234.567, 5000]) {
     Math.abs(rows[rows.length - 1].totalPrice - (T - rows.slice(0, -1).reduce((s, r) => s + r.totalPrice, 0))) < 1e-9)
 }
 // 单行手动 = 单价输入：页面把手填单价 × 数量 作为整单总价送入分摊 → 行单价 20、金额 20000
-const oneRow = allocateItems([{ productName: '单', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 20 * 1000)
+const oneRow = allocateItems([{ productName: '单', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 20 * 1000, true)
 ok('单行手动：单价 × 数量 = 金额', oneRow[0].unitPrice === 20 && oneRow[0].totalPrice === 20000,
   `${oneRow[0].unitPrice}×1000=${oneRow[0].totalPrice}`)
 // 数量 0 / 货值 0 边界：整单货值为 0 → 占比 0，各行金额为 0，不得 NaN
-const zRows = allocateItems(ITEMS.map((it) => ({ ...it, qty: 0 })), 1000)
+const zRows = allocateItems(ITEMS.map((it) => ({ ...it, qty: 0 })), 1000, true)
 ok('手动多行数量 0 → 无 NaN 且各行金额为 0',
   zRows.every((r) => Number.isFinite(r.unitPrice) && Number.isFinite(r.totalPrice) && r.totalPrice === 0),
   `Σ=${sumItems(zRows)}`)
+
+console.log('\n===== 用例 11：自动/手动在「兜底」上的差异（新规则）=====')
+// 自动模式（manual=false）不兜底：Σ 行金额 = 各行金额之和（可能略偏离传入的整单总价）
+const autoRows = allocateItems(ITEMS, 1234.57, false)
+ok('自动模式：Σ 行金额 === 各行金额之和（无兜底，严格）',
+  sumItems(autoRows) === round2(autoRows.reduce((s, r) => s + r.totalPrice, 0)), `Σ=${sumItems(autoRows)}`)
+ok('自动模式：每行 round(单价×数量,2)=金额',
+  autoRows.every((r) => round2(r.unitPrice * r.qty) === r.totalPrice))
+// 手动模式有兜底：Σ 严格 = 手填总价
+const manRows = allocateItems(ITEMS, 1234.57, true)
+ok('手动模式：Σ 行金额 === 手填总价（严格相等）', sumItems(manRows) === 1234.57, `Σ=${sumItems(manRows)}`)
+ok('手动模式最后一行被调整（与自动模式不同）',
+  Math.abs(manRows[manRows.length - 1].totalPrice - autoRows[autoRows.length - 1].totalPrice) > 1e-9,
+  `手动=${manRows[manRows.length - 1].totalPrice} 自动=${autoRows[autoRows.length - 1].totalPrice}`)
+// 常规 2 位优先：EVA 2000 件 $946.89 → 位数 ≥ 4 且误差 ≤ 1 分（2 位只到 940，偏差 0.73%）
+const eva = allocateItems([{ productName: 'EVA', qty: 2000, price: 100, vatRate: 13, rebateRate: 13 }], 946.89, false)
+ok('低价中批量：2000 件 $946.89 位数 ≥ 4 且误差 ≤ 0.01',
+  eva[0].decimals >= 4 && Math.abs(eva[0].totalPrice - 946.89) <= 0.01,
+  `unit=${eva[0].unitPrice} d=${eva[0].decimals} total=${eva[0].totalPrice}`)
+// 单产品大批量常规单价 → 2 位
+const s1 = allocateItems([{ productName: 'P', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 14847.29, false)
+ok('常规单价默认 2 位（14.85）', s1[0].decimals === 2 && s1[0].unitPrice === 14.85,
+  `unit=${s1[0].unitPrice} d=${s1[0].decimals}`)
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

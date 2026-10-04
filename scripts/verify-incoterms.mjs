@@ -225,31 +225,35 @@ ok('单行 items ≡ 扁平字段（逐字节）',
   oneItems.totalPrice === oneFlat.totalPrice && oneItems.unitPrice === oneFlat.unitPrice && oneItems.goodsValue === oneFlat.goodsValue,
   `items=${oneItems.totalPrice} flat=${oneFlat.totalPrice}`)
 
-console.log('\n===== 用例 10：按货值占比分摊 —— 单价×数量=金额、Σ行金额=整单总价、每行≤1分 =====')
+console.log('\n===== 用例 10：按货值占比分摊 —— 单价×数量=金额、每行≤容差、位数 2~6 =====')
 const round2 = (v) => Math.round(safeNum(v) * 100) / 100
 const safeNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+// 每行容差：max(0.01, 分摊额 × 0.1%)（自动模式 2 位小数的允许偏差）
+const lineTol = (amount) => Math.max(0.01, Math.abs(amount) * 0.001)
 const TOTAL10 = 14020.44
 const goodsLine = ITEMS.map(lineGoods)
 const goodsSum = goodsLine.reduce((s, v) => s + v, 0)
 const allocReal = goodsLine.map((g) => TOTAL10 * (g / goodsSum)) // 该行真实分摊额
+// 自动模式（manual=false）：不做最后一行兜底
 const rows = allocateItems(ITEMS, TOTAL10)
 // 1. 每行 round(单价×数量,2) === 金额
 ok('多行：每行 round(单价×数量,2) === 金额',
   rows.every((r) => round2(r.unitPrice * r.qty) === r.totalPrice),
   rows.map((r) => `${r.unitPrice}×${r.qty}=${round2(r.unitPrice * r.qty)}≠${r.totalPrice}`).join(' | '))
-// 2. Σ 行金额 === 整单总价（严格，容差 0.001）
-ok('多行：Σ 行金额 === 整单总价（容差 0.001）',
-  Math.abs(sumItems(rows) - TOTAL10) <= 0.001, `Σ=${sumItems(rows)} 整单总价=${TOTAL10}`)
-// 3. 每行 |金额 − 真实分摊额| ≤ 0.01（本次核心断言）
-ok('多行：每行 |金额 − 真实分摊额| ≤ 0.01',
-  rows.every((r, i) => Math.abs(r.totalPrice - allocReal[i]) <= 0.01),
-  rows.map((r, i) => `#${i + 1} ${r.totalPrice} vs ${allocReal[i].toFixed(4)}`).join(' | '))
+// 2. 自动模式：整单总价（Σ 行金额）严格 = sumItems（无兜底，Σ 即口径）
+ok('自动模式：Σ 行金额 === 整单总价（严格，整单总价 = Σ 行金额）',
+  sumItems(rows) === round2(rows.reduce((s, r) => s + r.totalPrice, 0)),
+  `Σ=${sumItems(rows)}`)
+// 3. 自动模式：每行 |金额 − 真实分摊额| ≤ max(0.01, 分摊额 × 0.1%)（本次核心断言）
+ok('自动模式：每行 |金额 − 真实分摊额| ≤ max(0.01, 分摊额×0.1%)',
+  rows.every((r, i) => Math.abs(r.totalPrice - allocReal[i]) <= lineTol(allocReal[i])),
+  rows.map((r, i) => `#${i + 1} ${r.totalPrice} vs ${allocReal[i].toFixed(4)} tol=${lineTol(allocReal[i]).toFixed(4)}`).join(' | '))
 // 4. 单价位数按需自适应，落在 2~6 位
 ok('多行：单价位数均在 2~6 位',
   rows.every((r) => Number.isInteger(r.decimals) && r.decimals >= 2 && r.decimals <= 6),
   rows.map((r) => r.decimals).join(','))
 ok('产品名透传', rows[1].productName === '配件')
-// 5. 单行：单价×数量=金额，且位数选得最小（14000/1000=14，2 位即够）
+// 5. 单行：单价×数量=金额，且常规价用 2 位（14000/1000=14，2 位即够）
 const oneRow = allocateItems([{ productName: '单', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 14000)
 ok('单行：单价 × 数量 === 金额', Math.abs(oneRow[0].unitPrice * oneRow[0].qty - oneRow[0].totalPrice) < 1e-9,
   `${oneRow[0].unitPrice}×1000=${oneRow[0].totalPrice}`)
@@ -258,12 +262,13 @@ ok('单行：整数单价用 2 位（位数取最小）', oneRow[0].decimals ===
 const bigQty = allocateItems([{ productName: '袋', qty: 200000, price: 100, vatRate: 13, rebateRate: 13 }], 94680)
 close('低单价大批量：行金额误差 ≤ 0.01（0.4734×200000）', bigQty[0].totalPrice, 94680, 0.01)
 ok('低单价大批量：单价位数上浮到 4 位', bigQty[0].decimals === 4, `decimals=${bigQty[0].decimals} unit=${bigQty[0].unitPrice}`)
-// 5c. EVA 收纳袋：2000 件真实分摊 $946.89（旧版 0.47 → 940 少算 6.89）
+// 5c. EVA 收纳袋：2000 件真实分摊 $946.89（2 位 0.47 → 940 少算 6.89，偏差 0.73% > 0.1%）
 const eva = allocateItems([{ productName: 'EVA', qty: 2000, price: 100, vatRate: 13, rebateRate: 13 }], 946.89)
-ok('低单价中批量：2000 件 $946.89 误差 ≤ 0.01', Math.abs(eva[0].totalPrice - 946.89) <= 0.01,
-  `unit=${eva[0].unitPrice} total=${eva[0].totalPrice} 旧版=0.47×2000=940`)
+ok('低价中批量：2000 件 $946.89 位数 ≥ 4 且误差 ≤ 0.01',
+  eva[0].decimals >= 4 && Math.abs(eva[0].totalPrice - 946.89) <= 0.01,
+  `unit=${eva[0].unitPrice} d=${eva[0].decimals} total=${eva[0].totalPrice} 旧版=0.47×2000=940`)
 // 6. 手动定价：Σ 行金额 严格等于手填总价，最后一行兜底
-const manualRows = allocateItems(ITEMS, 100.01)
+const manualRows = allocateItems(ITEMS, 100.01, true)
 ok('手动定价：Σ 行金额 === 手填总价（严格相等）', sumItems(manualRows) === 100.01, `Σ=${sumItems(manualRows)}`)
 ok('手动定价：最后一行 = 手填总价 − 前面各行之和',
   Math.abs(manualRows[manualRows.length - 1].totalPrice - (100.01 - manualRows.slice(0, -1).reduce((s, r) => s + r.totalPrice, 0))) < 1e-9)
@@ -278,25 +283,55 @@ ok('货值 0 → 占比 0，行单价/行金额为 0（无 NaN）',
   zeroGoods[0].unitPrice === 0 && zeroGoods[0].totalPrice === 0)
 eq('空明细 → 空结果', allocateItems([], 100).length, 0)
 
-console.log('\n===== 用例 11：三种金额量级下 单价×数量=金额、Σ=总价、每行≤1分 =====')
+console.log('\n===== 用例 11：自动/手动两种模式在任意总价下均成立 =====')
 for (const t of [0.47, 14.80, 1234.567]) {
   const T = Math.round(t * 100) / 100
-  const rs = allocateItems(ITEMS, t)
   const goodsR = ITEMS.map(lineGoods)
   const gSum = goodsR.reduce((s, v) => s + v, 0)
-  ok(`$${t} 多行每行 round(单价×数量,2)=金额`,
-    rs.every((r) => round2(r.unitPrice * r.qty) === r.totalPrice),
-    rs.map((r) => `${r.unitPrice}×${r.qty}=${r.totalPrice}`).join(' | '))
-  ok(`$${t} 多行 Σ 行金额 === 总价（容差 0.001）`,
-    Math.abs(sumItems(rs) - T) <= 0.001, `Σ=${sumItems(rs)} 期望=${T}`)
-  ok(`$${t} 多行每行 |金额 − 真实分摊额| ≤ 0.01`,
-    rs.every((r, i) => Math.abs(r.totalPrice - T * (goodsR[i] / gSum)) <= 0.01),
-    rs.map((r, i) => `#${i + 1} ${r.totalPrice} vs ${(T * (goodsR[i] / gSum)).toFixed(4)}`).join(' | '))
+  // 自动模式：无兜底，Σ 即整单总价口径；每行 ≤ max(0.01, 分摊额×0.1%)
+  const autoR = allocateItems(ITEMS, t, false)
+  ok(`自动 $${t} 每行 round(单价×数量,2)=金额`,
+    autoR.every((r) => round2(r.unitPrice * r.qty) === r.totalPrice),
+    autoR.map((r) => `${r.unitPrice}×${r.qty}=${r.totalPrice}`).join(' | '))
+  ok(`自动 $${t} Σ 行金额 === 整单总价（严格，= Σ 行金额）`,
+    sumItems(autoR) === round2(autoR.reduce((s, r) => s + r.totalPrice, 0)), `Σ=${sumItems(autoR)}`)
+  ok(`自动 $${t} 每行 |金额 − 真实分摊额| ≤ max(0.01, 分摊额×0.1%)`,
+    autoR.every((r, i) => Math.abs(r.totalPrice - T * (goodsR[i] / gSum)) <= lineTol(T * (goodsR[i] / gSum))),
+    autoR.map((r, i) => `#${i + 1} ${r.totalPrice} vs ${(T * (goodsR[i] / gSum)).toFixed(4)}`).join(' | '))
+  // 手动模式：兜底，Σ 严格 = 手填总价
+  const manR = allocateItems(ITEMS, t, true)
+  ok(`手动 $${t} Σ 行金额 === 手填总价（严格相等）`, sumItems(manR) === T, `Σ=${sumItems(manR)} 期望=${T}`)
+  ok(`手动 $${t} 每行 round(单价×数量,2)=金额`,
+    manR.every((r) => round2(r.unitPrice * r.qty) === r.totalPrice),
+    manR.map((r) => `${r.unitPrice}×${r.qty}=${r.totalPrice}`).join(' | '))
+  // 单行：单价×数量=金额
   const one = allocateItems([{ productName: '单', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], t)
   ok(`$${t} 单行 单价×数量=金额`, Math.abs(one[0].unitPrice * one[0].qty - one[0].totalPrice) < 1e-9,
     `${one[0].unitPrice}×1000=${one[0].totalPrice}`)
-  ok(`$${t} 任意总价 Σ 行金额 === 总价（严格）`, sumItems(rs) === T, `Σ=${sumItems(rs)} 期望=${T}`)
 }
+
+console.log('\n===== 用例 12：TASK-PRICE2 五场景 —— 2 位优先、低价值才升位 =====')
+// 场景 1/2：单产品大批量、常规单价 → 2 位；金额 = round(单价×数量,2)
+const s1 = allocateItems([{ productName: 'P', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 14847.29)
+eq('场景1 单价 = 14.85（2 位）', s1[0].unitPrice, 14.85)
+eq('场景1 金额 = 14850.00', s1[0].totalPrice, 14850)
+const s2 = allocateItems([{ productName: 'P', qty: 1000, price: 100, vatRate: 13, rebateRate: 13 }], 15398.10)
+eq('场景2 单价 = 15.40（2 位）', s2[0].unitPrice, 15.4)
+eq('场景2 金额 = 15400.00', s2[0].totalPrice, 15400)
+// 场景 3：EVA 2000 件 $946.89 —— 2 位偏差 0.73% > 0.1%，升位；位数 ≥ 4 且误差 ≤ 1 分
+const s3 = allocateItems([{ productName: 'EVA', qty: 2000, price: 100, vatRate: 13, rebateRate: 13 }], 946.89)
+ok('场景3 位数 ≥ 4 且 |金额 − 分摊额| ≤ 0.01', s3[0].decimals >= 4 && Math.abs(s3[0].totalPrice - 946.89) <= 0.01,
+  `unit=${s3[0].unitPrice} d=${s3[0].decimals} total=${s3[0].totalPrice}`)
+// 场景 4：低价袋 200000 件 $94680 —— 2 位偏差 0.72% > 0.1%，升到 4 位
+const s4 = allocateItems([{ productName: '袋', qty: 200000, price: 100, vatRate: 13, rebateRate: 13 }], 94680)
+eq('场景4 单价 = 0.4734（4 位）', s4[0].unitPrice, 0.4734)
+eq('场景4 位数 = 4', s4[0].decimals, 4)
+eq('场景4 金额 = 94680.00', s4[0].totalPrice, 94680)
+// 场景 5：手动 30000（多行）—— 兜底保证 Σ 严格 = 30000.00
+const s5 = allocateItems(ITEMS, 30000, true)
+eq('场景5 手动 Σ 行金额 = 30000.00（严格）', sumItems(s5), 30000)
+ok('场景5 每行 round(单价×数量,2)=金额', s5.every((r) => round2(r.unitPrice * r.qty) === r.totalPrice),
+  s5.map((r) => `${r.unitPrice}×${r.qty}=${r.totalPrice}`).join(' | '))
 
 console.log(`\n===== 汇总：PASS=${pass}  FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)
