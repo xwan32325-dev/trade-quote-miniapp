@@ -50,11 +50,13 @@ const l = calcLoading({
 });
 close('单箱体积 CBM', l.boxVolume, 0.06);
 eq('体积可装箱数', l.volumeBoxes, 396);
+eq('几何码放箱数', l.packBoxes, 392);
 eq('重量可装箱数', l.weightBoxes, 1458);
-eq('最终可装箱数', l.boxes, 396);
-eq('受体积限制', l.limitBy, 'volume');
-close('总方数', l.totalVolume, 23.76);
-close('总毛重', l.totalWeight, 4752);
+// 口径已升级为 min(体积, 码放, 重量)，装柜页清单见 verify-loading.mjs
+eq('最终可装箱数 = min(396,392,1458)', l.boxes, 392);
+eq('受码放限制', l.limitBy, 'packing');
+close('总方数', l.totalVolume, 23.52);
+close('总毛重', l.totalWeight, 4704);
 
 console.log('\n===== 用例 3：边界（数量 0 / 汇率 0 / 单箱尺寸 0）=====');
 const q3 = calcQuote({ price: 100, qty: 0, vatRate: 13, rebateRate: 13, domesticFee: 2000, exchangeRate: 0, profitRate: 10, freight: 500, insuranceRate: 0.3, markupRate: 10 });

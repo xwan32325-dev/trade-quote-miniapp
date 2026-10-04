@@ -14,8 +14,8 @@
 
     <!-- 完全无记录 -->
     <view class="card" v-if="!allList.length">
-      <view class="empty">还没有保存的报价记录</view>
-      <view class="muted" style="text-align: center">到「报价」页填入参数并点击「保存到记录」即可。</view>
+      <view class="empty">还没有保存的记录</view>
+      <view class="muted" style="text-align: center">到「报价」或「装柜」页填入参数并点击「保存到记录」即可。</view>
     </view>
 
     <!-- 有记录但当前筛选结果为空 -->
@@ -32,68 +32,104 @@
           <text class="record-title">{{ titleOf(item) }}</text>
           <text class="muted">{{ formatTime(item.createdAt) }}</text>
         </view>
-        <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
-        <view class="muted">运输方式：{{ transportText(item) }}</view>
-        <view class="record-summary">
-          <text v-if="itemsOf(item).length <= 1">{{ termOf(item) }} 单价 {{ codeOf(item) }} {{ fmt(item.unitPrice, unitDecimalsOf(item)) }}</text>
-          <text v-else>{{ termOf(item) }} 整单（{{ itemsOf(item).length }} 项）</text>
-          <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
-        </view>
+        <!-- 装柜记录：只展示箱数 / 方数 / 毛重 -->
+        <template v-if="isLoading(item)">
+          <view class="record-summary">
+            <text>{{ fmt(item.boxes, 0) }} 箱</text>
+            <text>{{ fmt(item.totalVolume, 2) }} CBM / {{ fmt(item.totalWeight, 0) }} kg</text>
+          </view>
+        </template>
+        <!-- 报价记录：保持原有逻辑 -->
+        <template v-else>
+          <view class="muted" v-if="item.customerName">客户：{{ item.customerName }}</view>
+          <view class="muted">运输方式：{{ transportText(item) }}</view>
+          <view class="record-summary">
+            <text v-if="itemsOf(item).length <= 1">{{ termOf(item) }} 单价 {{ codeOf(item) }} {{ fmt(item.unitPrice, unitDecimalsOf(item)) }}</text>
+            <text v-else>{{ termOf(item) }} 整单（{{ itemsOf(item).length }} 项）</text>
+            <text>总价 {{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
+          </view>
+        </template>
       </view>
 
       <view class="detail" v-if="expandedId === item.id">
-        <view class="result-line">
-          <text class="field-label">贸易方式</text>
-          <text class="result-value">{{ termLabel(termOf(item)) }}</text>
-        </view>
-        <view class="result-line" v-if="itemsOf(item).length <= 1">
-          <text class="field-label">{{ termOf(item) }} 单价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.unitPrice, unitDecimalsOf(item)) }} / 件</text>
-        </view>
-        <view class="result-line">
-          <text class="field-label">{{ termOf(item) }} 整单总价</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
-        </view>
-        <!-- 多产品：逐行列出分摊后的明细 -->
-        <view class="items" v-if="itemsOf(item).length > 1">
-          <view class="item-line" v-for="(row, i) in itemsOf(item)" :key="i">
-            <text class="item-name">{{ i + 1 }}. {{ row.productName || '未命名产品' }}</text>
-            <text class="item-calc">{{ fmt(row.qty, 0) }} 件 × {{ codeOf(item) }} {{ fmt(row.unitPrice, row.decimals) }} = {{ codeOf(item) }} {{ fmt(row.totalPrice) }}</text>
+        <!-- 装柜记录详情：与复制文本一致的字段 -->
+        <template v-if="isLoading(item)">
+          <view class="result-line">
+            <text class="field-label">箱规</text>
+            <text class="result-value">{{ dim(item.length) }} × {{ dim(item.width) }} × {{ dim(item.height) }} cm / {{ dim(item.grossWeight) }} kg</text>
           </view>
-        </view>
-        <view class="result-line">
-          <text class="field-label">货值成本</text>
-          <text class="result-value">¥ {{ fmt(costBaseOf(item)) }}</text>
-        </view>
-        <view class="result-line" v-if="includesOf(item).carriage">
-          <text class="field-label">运费</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.freight) }}</text>
-        </view>
-        <view class="result-line" v-if="includesOf(item).insurance">
-          <text class="field-label">保险费</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.insurance) }}</text>
-        </view>
-        <view class="result-line" v-if="includesOf(item).destination">
-          <text class="field-label">目的地费用</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.destinationFee) }}</text>
-        </view>
-        <view class="result-line" v-if="includesOf(item).duty">
-          <text class="field-label">进口关税</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.tariff) }}</text>
-        </view>
-        <view class="result-line" v-if="includesOf(item).duty">
-          <text class="field-label">进口增值税</text>
-          <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.importVat) }}</text>
-        </view>
-        <view class="result-line">
-          <text class="field-label">换汇成本（按 FOB 口径）</text>
-          <text class="result-value">{{ fmt(item.result.exchangeCost, 4) }}</text>
-        </view>
-        <view class="result-line">
-          <text class="field-label">盈亏率</text>
-          <text class="result-value">{{ fmt(item.result.profitPct) }}%</text>
-        </view>
-        <view class="muted" style="margin-top: 12rpx">输入：{{ inputText(item) }}</view>
+          <view class="result-line">
+            <text class="field-label">柜型</text>
+            <text class="result-value">{{ item.containerType }}</text>
+          </view>
+          <view class="result-line">
+            <text class="field-label">可装</text>
+            <text class="result-value">{{ fmt(item.boxes, 0) }} 箱 / {{ fmt(item.totalVolume, 2) }} CBM / {{ fmt(item.totalWeight, 2) }} kg / 利用率 {{ fmt(item.utilization, 2) }}%</text>
+          </view>
+          <view class="result-line">
+            <text class="field-label">限制因素</text>
+            <text class="result-value">{{ limitFactorOf(item) }}</text>
+          </view>
+          <view class="result-line" v-if="item.totalBoxes > 0 && item.containerCount > 0">
+            <text class="field-label">货量</text>
+            <text class="result-value">{{ fmt(item.totalBoxes, 0) }} 箱 → 需要 {{ item.containerCount }} 个 {{ item.containerType }}（最后一柜 {{ item.lastContainerBoxes }} 箱）</text>
+          </view>
+        </template>
+        <!-- 报价记录详情：保持原有逻辑 -->
+        <template v-else>
+          <view class="result-line">
+            <text class="field-label">贸易方式</text>
+            <text class="result-value">{{ termLabel(termOf(item)) }}</text>
+          </view>
+          <view class="result-line" v-if="itemsOf(item).length <= 1">
+            <text class="field-label">{{ termOf(item) }} 单价</text>
+            <text class="result-value">{{ codeOf(item) }} {{ fmt(item.unitPrice, unitDecimalsOf(item)) }} / 件</text>
+          </view>
+          <view class="result-line">
+            <text class="field-label">{{ termOf(item) }} 整单总价</text>
+            <text class="result-value">{{ codeOf(item) }} {{ fmt(item.totalPrice) }}</text>
+          </view>
+          <!-- 多产品：逐行列出分摊后的明细 -->
+          <view class="items" v-if="itemsOf(item).length > 1">
+            <view class="item-line" v-for="(row, i) in itemsOf(item)" :key="i">
+              <text class="item-name">{{ i + 1 }}. {{ row.productName || '未命名产品' }}</text>
+              <text class="item-calc">{{ fmt(row.qty, 0) }} 件 × {{ codeOf(item) }} {{ fmt(row.unitPrice, row.decimals) }} = {{ codeOf(item) }} {{ fmt(row.totalPrice) }}</text>
+            </view>
+          </view>
+          <view class="result-line">
+            <text class="field-label">货值成本</text>
+            <text class="result-value">¥ {{ fmt(costBaseOf(item)) }}</text>
+          </view>
+          <view class="result-line" v-if="includesOf(item).carriage">
+            <text class="field-label">运费</text>
+            <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.freight) }}</text>
+          </view>
+          <view class="result-line" v-if="includesOf(item).insurance">
+            <text class="field-label">保险费</text>
+            <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.insurance) }}</text>
+          </view>
+          <view class="result-line" v-if="includesOf(item).destination">
+            <text class="field-label">目的地费用</text>
+            <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.destinationFee) }}</text>
+          </view>
+          <view class="result-line" v-if="includesOf(item).duty">
+            <text class="field-label">进口关税</text>
+            <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.tariff) }}</text>
+          </view>
+          <view class="result-line" v-if="includesOf(item).duty">
+            <text class="field-label">进口增值税</text>
+            <text class="result-value">{{ codeOf(item) }} {{ fmt(item.result.importVat) }}</text>
+          </view>
+          <view class="result-line">
+            <text class="field-label">换汇成本（按 FOB 口径）</text>
+            <text class="result-value">{{ fmt(item.result.exchangeCost, 4) }}</text>
+          </view>
+          <view class="result-line">
+            <text class="field-label">盈亏率</text>
+            <text class="result-value">{{ fmt(item.result.profitPct) }}%</text>
+          </view>
+          <view class="muted" style="margin-top: 12rpx">输入：{{ inputText(item) }}</view>
+        </template>
         <view class="row" style="margin-top: 20rpx">
           <view class="btn btn-danger" @click.stop="onDelete(item.id)">删除这条</view>
         </view>
@@ -456,6 +492,26 @@ function itemsOf(item) {
   return item && Array.isArray(item.items) ? item.items : []
 }
 
+// 装柜记录判定：老报价记录无 type 或 type='quote' 一律按报价渲染
+function isLoading(item) {
+  return !!(item && item.type === 'loading')
+}
+
+// 装柜详情里的「限制因素」文案（与装柜页复制文本一致）
+function limitFactorOf(item) {
+  const p = (item && item.packLayout) || { x: 0, y: 0, z: 0 }
+  if (item.limitBy === 'packing') return `码放（几何最优 ${p.x} × ${p.y} × ${p.z} = ${item.packBoxes} 箱）`
+  if (item.limitBy === 'volume') return `体积（体积可装 ${item.volumeBoxes} 箱）`
+  if (item.limitBy === 'weight') return `重量（重量可装 ${item.weightBoxes} 箱）`
+  return '—'
+}
+
+// 箱规数字去掉无意义尾零（50.00 → 50）
+function dim(v) {
+  const n = Number(v)
+  return String(Number((Number.isFinite(n) ? n : 0).toFixed(4)))
+}
+
 // 单价展示位数：优先取该行分摊时选定的位数（自适应用），旧记录无此字段则回退 2 位
 function unitDecimalsOf(item) {
   const rows = itemsOf(item)
@@ -463,8 +519,11 @@ function unitDecimalsOf(item) {
   return Number.isFinite(d) ? d : 2
 }
 
-// 记录标题：多行显示「第一款名 等 N 项」；单行/旧记录直接显示产品名
+// 记录标题：装柜记录显示「柜型 · N 箱」；报价记录多行显示「第一款名 等 N 项」，单行直接显示产品名
 function titleOf(item) {
+  if (isLoading(item)) {
+    return item.title || `${item.containerType || '装柜'} · ${fmt(item.boxes, 0)} 箱`
+  }
   const items = itemsOf(item)
   if (items.length > 1) {
     return `${items[0].productName || '未命名产品'} 等 ${items.length} 项`
@@ -495,7 +554,7 @@ function toggle(id) {
 function onDelete(id) {
   uni.showModal({
     title: '删除记录',
-    content: '确定删除这条报价记录吗？',
+    content: '确定删除这条记录吗？',
     success: (res) => {
       if (res.confirm) {
         removeRecord(id)

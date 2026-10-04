@@ -337,6 +337,10 @@
         <text class="result-value low">{{ symbol }} {{ fmt(view.shortfall) }}</text>
       </view>
       <view class="result-note" v-if="uncountedText">未计入本次报价：{{ uncountedText }}</view>
+      <!-- 装柜参考：读装柜页记忆（箱规 + 柜型），用同一套装柜/多柜逻辑估算；拿不到数据时整行不显示 -->
+      <view class="loading-ref" v-if="loadingHint" @click="goLoading">
+        装柜参考：按「装柜」页箱规（{{ loadingHint.spec }}）估算，{{ fmt(totalQty, 0) }} 件约需 {{ loadingHint.count }} 个 {{ loadingHint.containerType }}
+      </view>
     </view>
 
     <view class="card">
@@ -401,8 +405,9 @@
 </template>
 
 <script setup>
-import { reactive, computed, onMounted, watch } from 'vue'
-import { formatNumber, safeNumber } from '../../utils/calc.js'
+import { reactive, computed, onMounted, watch, ref } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
+import { formatNumber, safeNumber, calcLoading } from '../../utils/calc.js'
 import { saveRecord, makeId, saveForm, loadForm } from '../../utils/storage.js'
 import { getFxRate, parseImage, buildQuoteDocUrl } from '../../utils/request.js'
 import { pickImageAsDataUrl } from '../../utils/image.js'
@@ -730,6 +735,44 @@ function normalizeItem(src) {
 // 展示用格式化：金额 2 位、汇率/换汇成本 4 位，均带千分位
 function fmt(v, decimals = 2) {
   return formatNumber(v, decimals)
+}
+
+// ---- 装柜参考：读装柜页记忆（箱规 + 柜型），用同一套 calcLoading + 多柜逻辑估算需要几个柜 ----
+const loadingMemo = ref(null)
+onShow(() => {
+  loadingMemo.value = loadForm('loading')
+})
+
+function dim(v) {
+  return String(Number(safeNumber(v).toFixed(4)))
+}
+
+const loadingHint = computed(() => {
+  const saved = loadingMemo.value
+  const qty = totalQty.value
+  if (!saved || qty <= 0) return null
+  const length = safeNumber(saved.length)
+  const width = safeNumber(saved.width)
+  const height = safeNumber(saved.height)
+  if (!(length > 0 && width > 0 && height > 0)) return null
+  const r = calcLoading({ ...saved, containerType: saved.containerType, loadRate: saved.loadRate })
+  if (r.boxes <= 0) return null
+  const perBoxQty = safeNumber(saved.perBoxQty)
+  // 总箱数：优先装柜页填的总箱数；否则按 件数 ÷ 每箱件数 向上取整；都没有则按 1 件/箱
+  const boxes = deriveBoxes(qty, perBoxQty)
+  if (boxes <= 0) return null
+  const gross = safeNumber(saved.grossWeight)
+  const spec = `${dim(length)}×${dim(width)}×${dim(height)}cm${gross > 0 ? '/' + dim(gross) + 'kg' : ''}`
+  return { count: Math.ceil(boxes / r.boxes), containerType: r.containerType, spec }
+})
+
+function deriveBoxes(qty, perBoxQty) {
+  if (perBoxQty > 0) return Math.ceil(qty / perBoxQty)
+  return Math.max(0, Math.floor(qty))
+}
+
+function goLoading() {
+  uni.switchTab({ url: '/pages/loading/index' })
 }
 
 // ---- 实时汇率：进入页面自动获取，手动可覆盖 ----
@@ -1646,6 +1689,16 @@ picker .field {
   line-height: 1.5;
   color: #9ca3af;
   padding-top: 12rpx;
+}
+
+/* 结果区底部「装柜参考」（可点击跳转装柜页） */
+.loading-ref {
+  margin-top: 16rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx dashed #e5e7eb;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: #6b7280;
 }
 
 /* 汇率状态栏：紧贴汇率输入框的小字提示 */
