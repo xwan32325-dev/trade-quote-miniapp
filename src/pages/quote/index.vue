@@ -185,7 +185,7 @@
       </view>
       <view class="dash"></view>
       <view class="result-line">
-        <text class="field-label">货值成本</text>
+        <text class="field-label">{{ costBaseLabel }}</text>
         <text class="result-value">¥ {{ fmt(result.costBase) }}</text>
       </view>
       <view class="result-line" v-if="result.includesFreight">
@@ -282,6 +282,11 @@ const form = reactive({
 })
 
 const result = computed(() => calcTermQuote(form))
+
+// 成本口径随术语变化：EXW 不含国内出口费用，其余术语含
+const costBaseLabel = computed(() =>
+  form.tradeTerm === 'EXW' ? '出厂成本（不含国内出口费用）' : '出口成本（含国内费用）',
+)
 
 // ---- 结算币种：picker 选项与当前项 ----
 const currencyRange = CURRENCIES.map((c) => `${c.name}（${c.code}）`)
