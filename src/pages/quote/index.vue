@@ -337,9 +337,10 @@
         <text class="result-value low">{{ symbol }} {{ fmt(view.shortfall) }}</text>
       </view>
       <view class="result-note" v-if="uncountedText">未计入本次报价：{{ uncountedText }}</view>
-      <!-- 装柜参考：读装柜页记忆（箱规 + 柜型），用同一套装柜/多柜逻辑估算；拿不到数据时整行不显示 -->
+      <!-- 装柜参考：读装柜页记忆（箱规 + 柜型），用同一套装柜/多柜逻辑估算；数据不足时给引导，不显示瞎猜的数字 -->
       <view class="loading-ref" v-if="loadingHint" @click="goLoading">
-        装柜参考：按「装柜」页箱规（{{ loadingHint.spec }}）估算，{{ fmt(totalQty, 0) }} 件约需 {{ loadingHint.count }} 个 {{ loadingHint.containerType }}
+        <template v-if="loadingHint.needPerBox">装柜参考：还差「每箱件数」，去「装柜」页填一下就能自动算要几个柜 ›</template>
+        <template v-else>装柜参考：按「装柜」页箱规（{{ loadingHint.spec }}）+ 每箱 {{ loadingHint.perBoxQty }} 件估算，{{ fmt(totalQty, 0) }} 件约需 {{ loadingHint.count }} 个 {{ loadingHint.containerType }} ›</template>
       </view>
     </view>
 
@@ -758,18 +759,14 @@ const loadingHint = computed(() => {
   const r = calcLoading({ ...saved, containerType: saved.containerType, loadRate: saved.loadRate })
   if (r.boxes <= 0) return null
   const perBoxQty = safeNumber(saved.perBoxQty)
-  // 总箱数：优先装柜页填的总箱数；否则按 件数 ÷ 每箱件数 向上取整；都没有则按 1 件/箱
-  const boxes = deriveBoxes(qty, perBoxQty)
-  if (boxes <= 0) return null
   const gross = safeNumber(saved.grossWeight)
   const spec = `${dim(length)}×${dim(width)}×${dim(height)}cm${gross > 0 ? '/' + dim(gross) + 'kg' : ''}`
-  return { count: Math.ceil(boxes / r.boxes), containerType: r.containerType, spec }
+  // 没填「每箱件数」就不硬凑：按 1 件/箱 会给出明显离谱的柜数（一个 50×40×30 的箱子装 1 件？）
+  if (!(perBoxQty > 0)) return { needPerBox: true, spec }
+  const boxes = Math.ceil(qty / perBoxQty)
+  if (boxes <= 0) return null
+  return { count: Math.ceil(boxes / r.boxes), containerType: r.containerType, spec, perBoxQty }
 })
-
-function deriveBoxes(qty, perBoxQty) {
-  if (perBoxQty > 0) return Math.ceil(qty / perBoxQty)
-  return Math.max(0, Math.floor(qty))
-}
 
 function goLoading() {
   uni.switchTab({ url: '/pages/loading/index' })
