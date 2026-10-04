@@ -128,7 +128,7 @@
     </view>
 
     <view class="card">
-      <view class="card-title">海运与保险</view>
+      <view class="card-title">{{ isSeaMode(form.transportMode) ? '海运与保险' : '运费与保险' }}</view>
       <view class="field">
         <text class="field-label">{{ freightLabelText }}</text>
         <input class="field-input" type="digit" v-model="form.freight" />
@@ -456,6 +456,12 @@ onMounted(() => {
 })
 
 function onSave() {
+  // 多式联运必须至少选 2 种，否则存进去的是无效组合
+  if (isMultimodal.value && form.multimodal.length < 2) {
+    uni.showToast({ title: '多式联运至少选 2 种', icon: 'none' })
+    return
+  }
+
   const r = result.value
   const record = {
     id: makeId(),
@@ -476,6 +482,12 @@ function onSave() {
 }
 
 function onCopyQuote() {
+  // 同理：多式联运没选够 2 种时不给复制，避免发出去的是无效报价单
+  if (isMultimodal.value && form.multimodal.length < 2) {
+    uni.showToast({ title: '多式联运至少选 2 种', icon: 'none' })
+    return
+  }
+
   const r = result.value
   const code = form.currency
   const t = terms.value
