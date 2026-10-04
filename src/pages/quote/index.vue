@@ -204,7 +204,7 @@
         <text class="field-label">{{ costBaseLabel }}</text>
         <text class="result-value">¥ {{ fmt(result.costBase) }}</text>
       </view>
-      <view class="result-line" v-if="result.warehouseFee > 0">
+      <view class="result-line" v-if="result.warehouseFee > 0 && counts.domestic">
         <text class="field-label">仓储费</text>
         <text class="result-value">¥ {{ fmt(result.warehouseFee) }}</text>
       </view>
@@ -417,11 +417,13 @@ const counts = computed(() => ({
   insurance: result.value.includesInsurance,
   destination: result.value.includesDestination,
   duty: result.value.includesDuty,
+  domestic: result.value.includesDomestic,
 }))
 // 结果区灰色提示：本术语未计入的费用项（避免用户以为填了没用）
 const uncountedText = computed(() => {
   const c = counts.value
   const names = []
+  if (!c.domestic) names.push('国内出口费用、仓储费')
   if (!c.freight) names.push('运费')
   if (!c.insurance) names.push('保险费')
   if (!c.destination) names.push('目的地费用')

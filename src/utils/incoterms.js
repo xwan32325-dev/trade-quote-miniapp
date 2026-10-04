@@ -183,6 +183,8 @@ export function calcTermQuote(input = {}) {
     includesInsurance: inc.insurance,
     includesDestination: inc.destination,
     includesDuty: inc.duty,
+    // EXW 不含国内出口费用与仓储费，其余术语都含
+    includesDomestic: term !== 'EXW',
   }
   const out = sanitizeNumbers(result)
   // 换汇成本低于汇率 → 盈利；高于汇率 → 亏损（无有效成本时两者都不标）
