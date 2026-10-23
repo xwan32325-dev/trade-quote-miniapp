@@ -22,7 +22,7 @@ Notable engineering details: cross-source FX precision picking (removes up to 16
 an enforced "unit price × quantity = line amount" money model with adaptive decimal precision, and 500+ assertions
 plus Puppeteer browser E2E used to verify AI-generated code before every commit.
 
-Backend (Node.js, DeepSeek API): see [`trade-quote-backend`](https://github.com/<your-github-username>/trade-quote-backend).
+Backend (Node.js, DeepSeek API): see [`trade-quote-backend`](https://github.com/xwan32325-dev/trade-quote-backend).
 
 </details>
 
